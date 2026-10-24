@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+
+# Build and production outputs
+dist/
+dist-ssr/
+build/
+out/
+
+# Caches and temporary directories
+.cache/
+.parcel-cache/
+.vite/
+.svelte-kit/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test coverage and reports
+coverage/
+*.lcov
+.nyc_output/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Editor and IDE configurations
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.vscode/*.log
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Agent and local files
+.agents/
+AGENTS.md
+materials/
