@@ -8,6 +8,8 @@ This prototype has no spaced repetition or saved study progress.
 
 > This is a **local prototype**, not a production-ready service. It is fully authored by AI.
 
+![Example](docs/images/example.png)
+
 ## Quick start
 
 You’ll need **Node.js 22.12+** and **npm**.
