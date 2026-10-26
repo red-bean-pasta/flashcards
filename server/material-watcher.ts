@@ -19,7 +19,7 @@ export async function watchMaterials(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
   const watcher = watch(directory, {
-    ignoreInitial: true, followSymlinks: false,
+    ignoreInitial: true, followSymlinks: true,
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
   });
 

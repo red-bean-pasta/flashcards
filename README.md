@@ -54,9 +54,15 @@ I'm **an avid reader**.
 
 You can keep multiple Markdown files in `materials/`, including subfolders. You can practice them all together or choose a single file in the app.
 
+The selector has one entry per Markdown file, with its relative folder path preserved (for example, `chapter/topic.md` appears as `chapter/topic`). Folders have no separate entry or folder-wide filter. “All materials” combines cards from every discovered Markdown file.
+
 You can add or edit files while the app is running. Your saved changes appear automatically, without rebuilding. If any file has a formatting error, practice pauses across the collection and shows you where to fix it. Once you fix and save the file, practice resumes automatically.
 
 > The `---` line is **optional**; you can use it to separate cards visually.
+
+> `materials/`, its subfolders, and individual Markdown files may be symbolic links. Changes reload automatically.
+
+> Only files whose name ends in `.md` (case-insensitive) are loaded; other files are skipped.
 
 4. **Start the app.**
 

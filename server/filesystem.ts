@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const filesystemCodes = new Set([
@@ -18,12 +18,22 @@ export class MaterialReadError extends Error {
   }
 }
 
-export async function scanMarkdown(directory: string): Promise<string[]> {
+export async function scanMarkdown(directory: string, ancestors: ReadonlySet<string> = new Set()): Promise<string[]> {
+  const resolved = await realpath(directory);
+  // Reject ancestor cycles; distinct logical aliases remain distinct materials.
+  if (ancestors.has(resolved)) {
+    const error: NodeJS.ErrnoException = new Error(`Recursive directory link: ${directory} resolves to ancestor ${resolved}`);
+    error.code = 'ELOOP';
+    error.path = directory;
+    throw error;
+  }
+  const branch = new Set([...ancestors, resolved]);
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map(async (entry) => {
     const filename = path.join(directory, entry.name);
-    if (entry.isDirectory()) return scanMarkdown(filename);
-    return entry.isFile() && entry.name.toLowerCase().endsWith('.md') ? [filename] : [];
+    const target = entry.isSymbolicLink() ? await stat(filename) : entry;
+    if (target.isDirectory()) return scanMarkdown(filename, branch);
+    return target.isFile() && entry.name.toLowerCase().endsWith('.md') ? [filename] : [];
   }));
   return nested.flat().sort();
 }
