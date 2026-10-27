@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { materialRevision } from './revision.js';
 import { CardParseError, parseCards } from './parser.js';
 import { isFilesystemError, MaterialReadError, readMaterial, scanMarkdown } from './filesystem.js';
 import type { Card, DeckState } from '../src/lib/types.js';
@@ -25,26 +26,28 @@ export function createMaterialLoader(directory: string, parse: typeof parseCards
   async function collectMaterials(filenames: string[]): Promise<DeckState> {
     const cards: Card[] = [];
     const errors: string[] = [];
+    const revisions: Record<string, string> = {};
     const files = filenames.map(file => path.relative(directory, file).split(path.sep).join('/'));
     for (const [index, filename] of filenames.entries()) {
       try {
         cards.push(...await loadCards(filename, files[index]));
+        revisions[files[index]] = materialRevision(cache.get(files[index])!.text);
       } catch (error) {
         if (!(error instanceof CardParseError || error instanceof MaterialReadError)) throw error;
         errors.push(error.message);
       }
     }
     pruneCache(files);
-    return { cards: errors.length ? [] : cards, files, errors, updatedAt: new Date().toISOString() };
+    return { cards: errors.length ? [] : cards, files, revisions, errors, updatedAt: new Date().toISOString() };
   }
 
   async function load(): Promise<DeckState> {
     let filenames: string[];
     try {
-      filenames = await scanMarkdown(directory);
+      filenames = (await scanMarkdown(directory)).filter(filename => path.basename(filename).toLowerCase() !== 'removed.md');
     } catch (error) {
       if (!isFilesystemError(error)) throw error;
-      return { cards: [], files: [], errors: [error.message], updatedAt: new Date().toISOString() };
+      return { cards: [], files: [], revisions: {}, errors: [error.message], updatedAt: new Date().toISOString() };
     }
     return collectMaterials(filenames);
   }

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const filesystemCodes = new Set([
   'ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EISDIR', 'EIO', 'EBUSY',
-  'EMFILE', 'ENFILE', 'ESTALE', 'ELOOP', 'ENAMETOOLONG', 'ENOSPC',
+  'EEXIST', 'EMFILE', 'ENFILE', 'ESTALE', 'ELOOP', 'ENAMETOOLONG', 'ENOSPC',
 ]);
 
 export function isFilesystemError(error: unknown): error is NodeJS.ErrnoException {

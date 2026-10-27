@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sizeActionButton } from '../lib/size-action-button';
   import type { Card } from '../lib/types';
   let { card, revealed, hasPrevious, onAction, onHide, onPrevious }: {
     card: Card; revealed: boolean; hasPrevious: boolean;
@@ -25,8 +26,8 @@
   </div>
 
   <div class="practice-actions">
-    <button class="primary-action" onclick={onAction}>
-      {revealed ? 'Next question' : 'Show answer'}
+    <button use:sizeActionButton class="primary-action" onclick={onAction}>
+      <span>{revealed ? 'Next question' : 'Show answer'}</span>
     </button>
     {#if revealed}<button class="text-action" onclick={onHide}>Hide answer</button>{/if}
     <button class="text-action" onclick={onPrevious} disabled={!hasPrevious}>Previous question</button>

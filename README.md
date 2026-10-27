@@ -82,6 +82,12 @@ Open [127.0.0.1:5173](http://127.0.0.1:5173).
 
 You can reveal an answer, hide it again, move to the next question, or revisit the previous one. Each card shows its source file and line number so you can find it in your notes. The material selector lets you choose what to practice, and a subtle bottom strip shows how much of the shuffled round remains.
 
+Use **Add**, **Remove**, and **Edit** at the bottom-right to change cards. Add offers filtered file suggestions and always includes **Default** (`default.md`). Enter a new name to create a `file_name.md` file. Edit keeps your place and answer visibility; Remove asks for confirmation and archives the exact entry in `removed.md`, which is excluded from practice. In-app changes update the current round immediately; additions join its end when they match the current filter.
+
+Each browser page holds its own snapshot. If another page or editor changes a destination file, saving reports a conflict and retains the dialog text. Copy any unsaved text before refreshing, since refresh starts a new shuffled round. No identifiers are embedded in your Markdown. Writes preserve symbolic links and untouched file content. Run one server per materials folder; revision checks do not lock out unrelated editors during the brief write operation.
+
+Removal uses a `.flashcards-removal.json` recovery journal in the materials folder. If interrupted, the server completes the pending removal on the next read, write, or startup. If recovery detects conflicting external edits, it fails explicitly and retains the journal for manual recovery; keep that file until the source and archive have been checked. This protects against interrupted application writes, but does not promise durability through a power loss.
+
 Press **Space** to reveal or advance, **←** to revisit, and **→** to advance.
 
 > The server defaults to `127.0.0.1:5173`; set `HOST` and `PORT` to change it.

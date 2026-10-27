@@ -1,15 +1,19 @@
 <script lang="ts">
+  import { sizeActionButton } from './lib/size-action-button';
   import { onMount } from 'svelte';
+  import CardDialog from './components/CardDialog.svelte';
+  import { applyMutation } from './lib/card-mutations';
   import Collection from './components/Collection.svelte';
   import Flashcard from './components/Flashcard.svelte';
-  import type { DeckState } from './lib/types';
-  import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession } from './lib/session';
+  import type { DeckState, MutationRequest, MutationResult } from './lib/types';
+  import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession, updateSession } from './lib/session';
   import { createDeckSync } from './lib/deck-sync';
 
-  let deck = $state<DeckState>({ cards: [], files: [], errors: [], updatedAt: '' });
+  let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {}, updatedAt: '' });
   let session = $state(startSession([]));
   let selectedSource = $state('');
   let networkError = $state('');
+  let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
   let sync: ReturnType<typeof createDeckSync> | undefined;
   const { order, index, revealed } = $derived(session);
@@ -31,6 +35,12 @@
     deck = next;
   }
 
+  function applySavedCard(request: MutationRequest, result: MutationResult) {
+    const next = applyMutation(deck, request, result);
+    session = updateSession(session, filterCards(next.cards, selectedSource));
+    deck = next;
+  }
+
   function refresh() {
     if (!sync) throw new Error('Cannot refresh before deck synchronization is mounted.');
     return sync.refresh();
@@ -39,7 +49,7 @@
   function handleKey(event: KeyboardEvent) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea') || blocked || !current) return;
+    if (dialogAction || event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea') || blocked || !current) return;
     if (event.code === 'Space') { event.preventDefault(); performAction(); }
     if (event.key === 'ArrowRight') move(1);
     if (event.key === 'ArrowLeft') showPrevious();
@@ -64,7 +74,7 @@
       <section class="notice" role="alert">
         <h1 class="section-label">{networkError ? 'Connection error' : 'Check your notes'}</h1>
         {#each deck.errors as error}<pre>{error}</pre>{/each}
-        {#if networkError}<p>{networkError}</p><button class="primary-action" onclick={refresh}>Retry</button>{/if}
+        {#if networkError}<p>{networkError}</p><button use:sizeActionButton class="primary-action" onclick={refresh}><span>Retry</span></button>{/if}
       </section>
     {:else if loading}
       <p class="section-label" role="status">Loading…</p>
@@ -84,7 +94,17 @@
   <footer class="collection-footer">
     <Collection files={deck.files} total={deck.cards.length} available={available.length}
       bind:source={selectedSource} onChange={startRound} />
+    <nav class="card-actions" aria-label="Manage cards">
+      <button class="text-action" disabled={loading || blocked} onclick={() => { dialogAction = 'add'; }}>Add</button>
+      <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
+      <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'edit'; }}>Edit</button>
+    </nav>
   </footer>
+
+  {#if dialogAction}
+    <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
+      onSaved={applySavedCard} onClose={() => { dialogAction = null; }} />
+  {/if}
 
   {#if order.length && !blocked}
     <div class="remaining-line" role="progressbar" aria-label="Questions remaining in this round"

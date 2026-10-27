@@ -4,7 +4,7 @@ import { DeckRequestError, fetchDeck } from '../src/lib/deck-client.ts';
 import { createDeckSync } from '../src/lib/deck-sync.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
-const deck: DeckState = { cards: [], files: [], errors: [], updatedAt: 'now' };
+const deck: DeckState = { cards: [], files: [], errors: [], revisions: {}, updatedAt: 'now' };
 const callbacks = () => ({ onDeck(_deck: DeckState) {}, onError(_message: string) {}, onLoading(_loading: boolean) {} });
 
 test('snapshot loader requests data only on explicit refresh', async () => {
@@ -79,4 +79,14 @@ test('sync ignores stale responses and responses after unmount', async () => {
   await last;
   assert.equal(received.length, 1);
   await assert.rejects(sync.refresh(), /closed/);
+});
+
+test('mutation transport preserves explicit conflicts and rejects invalid success shapes', async () => {
+  const { submitMutation } = await import('../src/lib/deck-client.ts');
+  const request = { action: 'add' as const, source: 'default.md', revision: null, question: 'Q', answer: 'A' };
+  await assert.rejects(submitMutation(request, async () => Response.json({ error: 'Refresh first' }, { status: 409 })), /Refresh first/);
+  await assert.rejects(submitMutation(request, async () => Response.json({ source: 'wrong.md', revision: 'r', cards: [] })), /invalid save response/);
+  const bug = new Error('Internal transport defect', { cause: new Error('root cause') });
+  await assert.rejects(submitMutation(request, async () => { throw bug; }), error => error === bug);
+  await assert.rejects(submitMutation(request, async () => { throw new TypeError('offline'); }), /outcome is unknown/);
 });

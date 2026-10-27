@@ -87,3 +87,18 @@ export function previousQuestion(previous: PracticeSession): PracticeSession {
   if (previous.index === 0) return previous;
   return { ...previous, index: previous.index - 1, revealed: true };
 }
+
+// In-app operations retain round order; only removal of the current card changes focus.
+export function updateSession(previous: PracticeSession, cards: Card[]): PracticeSession {
+  assertSession(previous);
+  if (new Set(cards.map(card => card.id)).size !== cards.length) throw new Error('Mutation produced duplicate card IDs.');
+  const current = previous.order[previous.index];
+  const retained = retainExistingCards(previous.order, cards);
+  const retainedIds = new Set(retained.map(card => card.id));
+  const order = [...retained, ...cards.filter(card => !retainedIds.has(card.id))];
+  const position = current ? order.findIndex(card => card.id === current.id) : -1;
+  const index = position >= 0 ? position : (order.length ? Math.min(previous.index, order.length - 1) : 0);
+  const result = { order, index, revealed: position >= 0 ? previous.revealed : false };
+  assertSession(result);
+  return result;
+}

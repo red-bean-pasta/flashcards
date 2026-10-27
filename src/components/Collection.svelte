@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sourceLabel } from '../lib/card-mutations';
   let { files, total, available, source = $bindable(), onChange }: {
     files: string[]; total: number; available: number;
     source: string; onChange: () => void;
@@ -11,7 +12,7 @@
     <select id="source" bind:value={source} onchange={onChange}>
       <option value="">All materials</option>
       {#each files as file}
-        <option value={file}>{file.replace(/\.md$/i, '').replaceAll('-', ' ')}</option>
+        <option value={file}>{sourceLabel(file)}</option>
       {/each}
     </select>
   </div>

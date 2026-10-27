@@ -11,5 +11,13 @@ export interface DeckState {
   cards: Card[];
   files: string[];
   errors: string[];
+  revisions: Record<string, string>;
   updatedAt: string;
 }
+
+export type MutationRequest = { source: string; revision: string | null } & (
+  | { action: 'add'; question: string; answer: string }
+  | { action: 'edit'; index: number; question: string; answer: string }
+  | { action: 'remove'; index: number }
+);
+export type MutationResult = { source: string; revision: string; cards: Card[] };

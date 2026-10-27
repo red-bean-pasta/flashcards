@@ -26,8 +26,8 @@ function cardMarker(node: RootContent, raw: string, span: Span): Marker | undefi
 function ignoredSeparator(node: RootContent, raw: string, span: Span): Span | undefined {
   if (node.type === 'thematicBreak' && raw.trim() === '---') return span;
   // Without a blank line, Markdown treats --- as a setext heading underline.
-  if (node.type === 'heading' && node.depth === 2 && /\n {0,3}---[ \t]*$/.test(raw)) {
-    return { start: span.start + raw.lastIndexOf('\n') + 1, end: span.end };
+  if (node.type === 'heading' && node.depth === 2 && /(?:\r\n?|\n) {0,3}---[ \t]*$/.test(raw)) {
+    return { start: span.start + Math.max(raw.lastIndexOf('\n'), raw.lastIndexOf('\r')) + 1, end: span.end };
   }
 }
 
