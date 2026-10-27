@@ -5,8 +5,26 @@ import { createDeckSync } from '../src/lib/deck-sync.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
 const deck: DeckState = { cards: [], files: [], errors: [], updatedAt: 'now' };
-const events = () => ({ addEventListener() {}, removeEventListener() {}, close() {} });
-const callbacks = () => ({ onDeck(_deck: DeckState) {}, onConnection(_status: string) {}, onError(_message: string) {}, onLoading(_loading: boolean) {} });
+const callbacks = () => ({ onDeck(_deck: DeckState) {}, onError(_message: string) {}, onLoading(_loading: boolean) {} });
+
+test('snapshot loader requests data only on explicit refresh', async () => {
+  let requests = 0;
+  let external = { ...deck, updatedAt: 'initial' };
+  const received: DeckState[] = [];
+  const sync = createDeckSync({ ...callbacks(), onDeck: value => received.push(value) }, async () => {
+    requests++;
+    return external;
+  });
+  assert.equal(requests, 0);
+  await sync.refresh();
+  external = { ...deck, updatedAt: 'external edit' };
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(requests, 1);
+  assert.deepEqual(received.map(value => value.updatedAt), ['initial']);
+  await sync.refresh();
+  assert.deepEqual(received.map(value => value.updatedAt), ['initial', 'external edit']);
+  sync.close();
+});
 
 test('HTTP, malformed JSON, invalid shapes and network failures are explicit request errors', async () => {
   for (const response of [new Response('error', { status: 503 }), new Response('{'), Response.json({ cards: 'wrong' })]) {
@@ -28,17 +46,17 @@ test('unexpected transport errors and consumed-body contract failures propagate 
 test('sync recovers only request errors; reconciliation failures retain identity and cause', async () => {
   let diagnostic = '';
   const hooks = { ...callbacks(), onError(message: string) { diagnostic = message; } };
-  const recoverable = createDeckSync(events(), hooks, async () => { throw new DeckRequestError('offline'); });
+  const recoverable = createDeckSync(hooks, async () => { throw new DeckRequestError('offline'); });
   await recoverable.refresh();
   assert.equal(diagnostic, 'offline');
   recoverable.close();
   diagnostic = '';
   const bug = new TypeError('Broken session invariant', { cause: new Error('root bug') });
-  const broken = createDeckSync(events(), { ...hooks, onDeck() { throw bug; } }, async () => deck);
+  const broken = createDeckSync({ ...hooks, onDeck() { throw bug; } }, async () => deck);
   await assert.rejects(broken.refresh(), error => error === bug);
   assert.equal(diagnostic, '');
   broken.close();
-  const requestBug = createDeckSync(events(), hooks, async () => { throw bug; });
+  const requestBug = createDeckSync(hooks, async () => { throw bug; });
   await assert.rejects(requestBug.refresh(), error => error === bug);
   requestBug.close();
 });
@@ -46,7 +64,7 @@ test('sync recovers only request errors; reconciliation failures retain identity
 test('sync ignores stale responses and responses after unmount', async () => {
   const requests: Array<(deck: DeckState) => void> = [];
   const received: DeckState[] = [];
-  const sync = createDeckSync(events(), { ...callbacks(), onDeck: deck => received.push(deck) },
+  const sync = createDeckSync({ ...callbacks(), onDeck: deck => received.push(deck) },
     () => new Promise(resolve => requests.push(resolve)));
   const first = sync.refresh();
   const second = sync.refresh();

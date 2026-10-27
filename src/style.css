@@ -241,7 +241,6 @@ a { color: inherit; }
   cursor: pointer;
 }
 .collection-count { white-space: nowrap; }
-.connection-status { color: #9d8e70; }
 
 .remaining-line {
   position: fixed;

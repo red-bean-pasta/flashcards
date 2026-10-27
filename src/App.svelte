@@ -9,7 +9,6 @@
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], updatedAt: '' });
   let session = $state(startSession([]));
   let selectedSource = $state('');
-  let connection = $state('Connecting');
   let networkError = $state('');
   let loading = $state(true);
   let sync: ReturnType<typeof createDeckSync> | undefined;
@@ -47,9 +46,8 @@
   }
 
   onMount(() => {
-    sync = createDeckSync(new EventSource('/api/events'), {
+    sync = createDeckSync({
       onDeck: applyDeck,
-      onConnection: status => { connection = status; },
       onError: message => { networkError = message; },
       onLoading: value => { loading = value; },
     });
@@ -86,7 +84,6 @@
   <footer class="collection-footer">
     <Collection files={deck.files} total={deck.cards.length} available={available.length}
       bind:source={selectedSource} onChange={startRound} />
-    {#if connection !== 'Live'}<span class="connection-status" role="status">{connection}</span>{/if}
   </footer>
 
   {#if order.length && !blocked}

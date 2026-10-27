@@ -4,67 +4,69 @@ import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDeckStore } from '../server/deck.js';
-import type { DeckState } from '../src/lib/types.js';
 
 const valid = (question: string) => `# question\n${question}\n# answer\nAnswer`;
-test('recursive scanning and live add/change/invalid/recovery/delete', async () => {
+
+test('explicit loads read external entry/file changes without modifying previous snapshots', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'flashcards-test-'));
-  const store = await createDeckStore(directory);
-  async function change(action: () => Promise<unknown>, condition: (state: DeckState) => boolean) {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Timed out waiting for deck update')); }, 6000);
-      const unsubscribe = store.subscribe(state => { if (condition(state)) { clearTimeout(timeout); unsubscribe(); resolve(); } });
-      action().catch(error => { clearTimeout(timeout); unsubscribe(); reject(error); });
-    });
-  }
   try {
     await mkdir(path.join(directory, 'nested'));
-    await writeFile(path.join(directory, 'ignore.txt'), '# answer');
     const file = path.join(directory, 'nested', 'deck.md');
-    await change(() => writeFile(file, valid('One')), state => state.cards.length === 1);
-    assert.deepEqual(store.getState().files, ['nested/deck.md']);
-    await change(() => writeFile(file, valid('Two')), state => state.cards[0]?.question === 'Two');
-    await change(() => writeFile(file, '# question\nUnfinished'), state => state.errors.length === 1);
-    assert.equal(store.getState().cards.length, 0);
-    assert.match(store.getState().errors[0], /nested\/deck.md:1/);
-    await change(() => writeFile(file, valid('Recovered')), state => state.cards[0]?.question === 'Recovered');
-    await change(() => rm(file), state => state.files.length === 0 && state.errors.length === 0);
-  } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+    await writeFile(file, valid('One'));
+    const store = await createDeckStore(directory);
+    const original = await store.getState();
+    assert.deepEqual(original.files, ['nested/deck.md']);
+    await writeFile(path.join(directory, 'ignore.txt'), '# answer');
+    await writeFile(file, valid('Two') + '\n\n' + valid('Three'));
+    const edited = await store.getState();
+    assert.deepEqual(edited.cards.map(card => card.question), ['Two', 'Three']);
+    assert.equal(original.cards[0].question, 'One');
+    assert.equal(original.cards.length, 1);
+    await writeFile(file, valid('Three'));
+    assert.equal((await store.getState()).cards.length, 1);
+    const added = path.join(directory, 'new.md');
+    await writeFile(added, valid('New file'));
+    assert.deepEqual((await store.getState()).files, ['nested/deck.md', 'new.md']);
+    await writeFile(file, '# question\nUnfinished');
+    const invalid = await store.getState();
+    assert.equal(invalid.cards.length, 0);
+    assert.match(invalid.errors[0], /nested\/deck.md:1/);
+    assert.equal(edited.errors.length, 0);
+    await writeFile(file, valid('Recovered'));
+    assert.equal((await store.getState()).errors.length, 0);
+    await rm(file);
+    await rm(added);
+    assert.deepEqual((await store.getState()).files, []);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
 test('missing materials path fails explicitly', async () => {
   await assert.rejects(createDeckStore('/nonexistent-flashcards-directory'), /ENOENT/);
 });
 
-test('linked materials root watches linked file and subfolder targets', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'flashcards-watch-links-'));
-  const root = path.join(directory, 'materials');
-  const target = path.join(directory, 'target');
-  const external = path.join(directory, 'external');
-  await mkdir(target);
-  await mkdir(external);
-  const linkedFile = path.join(directory, 'source.md');
-  const nestedFile = path.join(external, 'nested.md');
-  await writeFile(linkedFile, valid('File'));
-  await writeFile(nestedFile, valid('Nested'));
-  await symlink(target, root);
-  await symlink(linkedFile, path.join(target, 'linked.md'));
-  await symlink(external, path.join(target, 'folder'));
-  const store = await createDeckStore(root);
-  async function update(filename: string, question: string) {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Linked target update timed out')); }, 6000);
-      const unsubscribe = store.subscribe(state => {
-        if (state.cards.some(card => card.question === question)) {
-          clearTimeout(timeout); unsubscribe(); resolve();
-        }
-      });
-      writeFile(filename, valid(question)).catch(error => { clearTimeout(timeout); unsubscribe(); reject(error); });
-    });
-  }
+test('refresh reads linked root, file and subfolder changes', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'flashcards-links-'));
   try {
-    assert.deepEqual(store.getState().files, ['folder/nested.md', 'linked.md']);
-    await update(linkedFile, 'Updated file');
-    await update(nestedFile, 'Updated nested');
-    await update(path.join(external, 'new.md'), 'Added nested');
-  } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+    const root = path.join(directory, 'materials');
+    const target = path.join(directory, 'target');
+    const external = path.join(directory, 'external');
+    await mkdir(target);
+    await mkdir(external);
+    const linkedFile = path.join(directory, 'source.md');
+    const nestedFile = path.join(external, 'nested.md');
+    await writeFile(linkedFile, valid('File'));
+    await writeFile(nestedFile, valid('Nested'));
+    await symlink(target, root);
+    await symlink(linkedFile, path.join(target, 'linked.md'));
+    await symlink(external, path.join(target, 'folder'));
+    const store = await createDeckStore(root);
+    const original = await store.getState();
+    assert.deepEqual(original.files, ['folder/nested.md', 'linked.md']);
+    await writeFile(linkedFile, valid('Updated file'));
+    await writeFile(nestedFile, valid('Updated nested'));
+    await writeFile(path.join(external, 'new.md'), valid('Added nested'));
+    assert.deepEqual((await store.getState()).cards.map(card => card.question),
+      ['Updated nested', 'Added nested', 'Updated file']);
+    assert.deepEqual(original.cards.map(card => card.question), ['Nested', 'File']);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -27,7 +27,6 @@ const server = app.listen(port, process.env.HOST ?? '127.0.0.1', () => {
 async function close() {
   server.close();
   server.closeAllConnections();
-  await store.close();
   await vite?.close();
 }
 process.once('SIGINT', () => { void close(); });
