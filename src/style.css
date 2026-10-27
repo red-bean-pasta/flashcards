@@ -18,7 +18,7 @@
   --source-font-ratio: 90%;        /* Of the Question label, not the question body. */
   --blockquote-font-ratio: 75%;    /* Of its section body: answer or question. */
   --collection-font-size: 0.75rem; /* Practice from, selection, card count and status. */
-  --progress-height: 1%;          /* Of viewport height; width still tracks remaining cards. */
+  --progress-thickness: 1%;       /* Of viewport height on desktop, width on mobile. */
   /* Fade means transparency: 0% keeps text visible, 100% makes it invisible. */
   --question-fade-top: 75%;        /* Fading at the top of the whole question block. */
   --question-fade-bottom: 0%;      /* Fading at the end position below. */
@@ -42,10 +42,17 @@ button:focus-visible, a:focus-visible, select:focus-visible {
 }
 a { color: inherit; }
 
-.shell { position: relative; min-height: 100svh; }
+.shell {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+.shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
+.practice-scroll { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
+.practice-page { position: relative; min-height: 100%; display: grid; }
 
 .practice {
-  min-height: 100svh;
+  min-width: 0;
   display: grid;
   place-items: center;
   padding: 92px 32px;
@@ -260,18 +267,6 @@ a { color: inherit; }
 }
 .collection-count { white-space: nowrap; }
 
-.remaining-line {
-  position: fixed;
-  inset: auto 0 0;
-  height: var(--progress-height);
-  pointer-events: none;
-}
-.remaining-line > div {
-  height: 100%;
-  background: #a7b29a;
-  transition: width 400ms ease;
-}
-
 .notice {
   width: min(100%, 640px);
   text-align: center;
@@ -287,7 +282,11 @@ a { color: inherit; }
   font-size: 12px;
 }
 
-@media (max-width: 600px) {
+/* Portrait includes square viewports: height >= width. */
+@media (orientation: portrait) {
+  .shell { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); }
+  .shell.has-progress { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) var(--progress-thickness); }
+  .shell .remaining-line .progress-fill { transform: scaleY(var(--remaining-fraction)); }
   .practice { padding: 86px 24px; }
   .answer { padding-top: 30px; }
   .collection-footer { right: 20px; left: 20px; bottom: max(18px, env(safe-area-inset-bottom)); max-width: calc(100% - 40px); }
