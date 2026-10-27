@@ -1,25 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, writeFile, rm, symlink, lstat, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile, rm, symlink, lstat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { temporaryDirectory } from './support/temporary-directory.ts';
 import { createDeckStore } from '../server/deck.js';
 import { MutationError } from '../server/mutations.js';
 import { materialRevision } from '../server/revision.js';
 import { createWriteTransaction } from '../server/write-transaction.js';
-import { parseCardRanges } from '../server/parser.js';
+import { parseCardRanges, parseCards } from '../server/parser.js';
 import { applyMutation } from '../src/lib/card-mutations.js';
 import { updateSession } from '../src/lib/session.js';
 import type { MutationRequest } from '../src/lib/types.js';
 
 const entry = (q: string, a = 'Answer') => `# question\n${q}\n\n# answer\n${a}\n\n`;
-async function fixture(run: (directory: string) => Promise<void>) {
-  const directory = await mkdtemp(path.join(tmpdir(), 'flashcards-mutations-'));
-  try { await run(directory); }
-  finally { await rm(directory, { recursive: true, force: true }); }
-}
 
-test('raw spans edit the correct duplicate and retain CRLF, multiline positions and round identity', async () => fixture(async directory => {
+test('raw spans edit the correct duplicate and retain CRLF, multiline positions and round identity', async t => {
+  const directory = await temporaryDirectory(t);
   const original = (entry('Same') + entry('Same') + entry('Last')).replaceAll('\n', '\r\n');
   const file = path.join(directory, 'deck.md');
   await writeFile(file, original);
@@ -41,9 +37,10 @@ test('raw spans edit the correct duplicate and retain CRLF, multiline positions 
   assert.deepEqual(session.order.map(card => card.id), previous.order.map(card => card.id));
   assert.equal(session.revealed, true);
   assert.equal(session.index, 1);
-}));
+});
 
-test('mutations only update the page snapshot; stale tabs and external target edits reject writes', async () => fixture(async directory => {
+test('mutations only update the page snapshot; stale tabs and external target edits reject writes', async t => {
+  const directory = await temporaryDirectory(t);
   await writeFile(path.join(directory, 'a.md'), entry('A'));
   await writeFile(path.join(directory, 'b.md'), entry('B'));
   const store = await createDeckStore(directory);
@@ -59,10 +56,11 @@ test('mutations only update the page snapshot; stale tabs and external target ed
   await assert.rejects(store.mutate(request), error => error instanceof MutationError && error.status === 409);
   await assert.rejects(store.mutate({ ...request, source: 'b.md', revision: tabA.revisions['b.md'] }), /changed since/);
   assert.equal((await store.getState()).cards.find(card => card.source === 'b.md')!.question, 'External');
-}));
+});
 
-test('remove first/middle/last/only archives exact entries and excludes archive from practice', async () => {
-  for (const index of [0, 1, 2]) await fixture(async directory => {
+test('remove first/middle/last archives exact entries and excludes archive from practice', async t => {
+  for (const index of [0, 1, 2]) {
+    const directory = await temporaryDirectory(t);
     const text = entry('One') + entry('Two') + entry('Three');
     await writeFile(path.join(directory, 'deck.md'), text);
     const store = await createDeckStore(directory);
@@ -79,18 +77,21 @@ test('remove first/middle/last/only archives exact entries and excludes archive 
     assert.equal(await readFile(path.join(directory, 'removed.md'), 'utf8'), text.slice(ranges[index].start, ranges[index].end));
     assert.deepEqual((await store.getState()).files, ['deck.md']);
     assert.equal((await store.getState()).cards.length, 2);
-  });
-  await fixture(async directory => {
-    await writeFile(path.join(directory, 'deck.md'), entry('Only'));
-    const store = await createDeckStore(directory);
-    const deck = await store.getState();
-    const result = await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 });
-    assert.deepEqual(result.cards, []);
-    assert.deepEqual(updateSession({ order: deck.cards, index: 0, revealed: true }, []), { order: [], index: 0, revealed: false });
-  });
+  }
 });
 
-test('adds create files, append to matching rounds, and reject invalid input without disk changes', async () => fixture(async directory => {
+test('removing the only card leaves an empty round', async t => {
+  const directory = await temporaryDirectory(t);
+  await writeFile(path.join(directory, 'deck.md'), entry('Only'));
+  const store = await createDeckStore(directory);
+  const deck = await store.getState();
+  const result = await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 });
+  assert.deepEqual(result.cards, []);
+  assert.deepEqual(updateSession({ order: deck.cards, index: 0, revealed: true }, []), { order: [], index: 0, revealed: false });
+});
+
+test('adds create files, append to matching rounds, and reject invalid input without disk changes', async t => {
+  const directory = await temporaryDirectory(t);
   const store = await createDeckStore(directory);
   const deck = await store.getState();
   const request: MutationRequest = { action: 'add', source: 'default.md', revision: null, question: 'New', answer: 'Answer' };
@@ -107,9 +108,10 @@ test('adds create files, append to matching rounds, and reject invalid input wit
   ]) await assert.rejects(store.mutate(bad), MutationError);
   assert.equal(await readFile(path.join(directory, 'default.md'), 'utf8'), before);
   await assert.rejects(store.mutate(request), /changed since/);
-}));
+});
 
-test('root/file/folder symlinks survive writes and removals', async () => fixture(async directory => {
+test('root/file/folder symlinks survive writes and removals', async t => {
+  const directory = await temporaryDirectory(t);
   await mkdir(path.join(directory, 'target'));
   await mkdir(path.join(directory, 'external'));
   await writeFile(path.join(directory, 'card.md'), entry('Linked'));
@@ -127,9 +129,10 @@ test('root/file/folder symlinks survive writes and removals', async () => fixtur
   assert.ok((await lstat(path.join(directory, 'target', 'linked.md'))).isSymbolicLink());
   assert.ok((await lstat(path.join(directory, 'target', 'folder'))).isSymbolicLink());
   assert.equal(await readFile(path.join(directory, 'card.md'), 'utf8'), '');
-}));
+});
 
-test('interrupted removal replays once, refuses conflicting recovery, and preserves both originals before archive failure', async () => fixture(async directory => {
+test('interrupted removal replays once, refuses conflicting recovery, and preserves both originals before archive failure', async t => {
+  const directory = await temporaryDirectory(t);
   const source = path.join(directory, 'deck.md');
   const archive = path.join(directory, 'removed.md');
   const before = entry('One') + entry('Two');
@@ -154,9 +157,10 @@ test('interrupted removal replays once, refuses conflicting recovery, and preser
   const store = await createDeckStore(directory);
   await assert.rejects(store.mutate({ action: 'remove', source: 'deck.md', revision: materialRevision(entry('External')), index: 0 }), /EISDIR/);
   assert.equal(await readFile(source, 'utf8'), entry('External'));
-}));
+});
 
-test('archive aliasing the source rejects removal without changing either file', async () => fixture(async directory => {
+test('archive aliasing the source rejects removal without changing either file', async t => {
+  const directory = await temporaryDirectory(t);
   const file = path.join(directory, 'deck.md');
   await writeFile(file, entry('Keep'));
   await symlink(file, path.join(directory, 'removed.md'));
@@ -164,9 +168,10 @@ test('archive aliasing the source rejects removal without changing either file',
   const deck = await store.getState();
   await assert.rejects(store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }), /same file/);
   assert.equal(await readFile(file, 'utf8'), entry('Keep'));
-}));
+});
 
-test('concurrent writes from the same revision serialize and only one succeeds', async () => fixture(async directory => {
+test('concurrent writes from the same revision serialize and only one succeeds', async t => {
+  const directory = await temporaryDirectory(t);
   await writeFile(path.join(directory, 'deck.md'), entry('Original'));
   const store = await createDeckStore(directory);
   const deck = await store.getState();
@@ -176,9 +181,10 @@ test('concurrent writes from the same revision serialize and only one succeeds',
   const rejected = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult;
   assert.ok(rejected.reason instanceof MutationError);
   assert.equal(rejected.reason.status, 409);
-}));
+});
 
-test('CR-only and fenced markers preserve raw positions and ignore nested headings', async () => fixture(async directory => {
+test('CR-only and fenced markers preserve raw positions and ignore nested headings', async t => {
+  const directory = await temporaryDirectory(t);
   const text = entry('First', '```md\n# question\n# answer\n```') + entry('Second');
   const raw = text.replaceAll('\n', '\r');
   await writeFile(path.join(directory, 'deck.md'), raw);
@@ -188,10 +194,10 @@ test('CR-only and fenced markers preserve raw positions and ignore nested headin
   const result = await store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 1, question: 'Updated', answer: 'Answer' });
   assert.equal(result.cards[0].answer, '```md\n# question\n# answer\n```');
   assert.ok((await readFile(path.join(directory, 'deck.md'), 'utf8')).startsWith(entry('First', '```md\n# question\n# answer\n```').replaceAll('\n', '\r')));
-}));
+});
 
 test('removing a preceding card retains current ID, reveal and order while progress moves with it', () => {
-  const cards = parseCardRanges(entry('One') + entry('Two') + entry('Three'), 'deck.md').map(range => range.card);
+  const cards = parseCards(entry('One') + entry('Two') + entry('Three'), 'deck.md');
   const previous = { order: cards, index: 2, revealed: true };
   const session = updateSession(previous, cards.slice(1));
   assert.equal(session.order[session.index].id, cards[2].id);
@@ -200,10 +206,11 @@ test('removing a preceding card retains current ID, reveal and order while progr
   assert.equal(session.order.length - session.index - 1, 0);
 });
 
-test('dangling destination links fail without replacing the symbolic link', async () => fixture(async directory => {
+test('dangling destination links fail without replacing the symbolic link', async t => {
+  const directory = await temporaryDirectory(t);
   const file = path.join(directory, 'default.md');
   await symlink('missing.md', file);
   const store = await createDeckStore(directory);
   await assert.rejects(store.mutate({ action: 'add', source: 'default.md', revision: null, question: 'Q', answer: 'A' }), /ENOENT/);
   assert.ok((await lstat(file)).isSymbolicLink());
-}));
+});

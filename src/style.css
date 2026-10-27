@@ -236,6 +236,7 @@ a { color: inherit; }
 }
 
 .collection {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -299,7 +300,6 @@ a { color: inherit; }
 
 .card-actions { display: flex; gap: 20px; margin-left: auto; }
 .card-actions .text-action { font-size: inherit; }
-.collection { flex: 1; }
 dialog {
   width: min(640px, calc(100% - 32px)); max-height: calc(100svh - 40px);
   overflow: auto; border: 1px solid #c5ceba; border-radius: var(--dialog-corner-radius);

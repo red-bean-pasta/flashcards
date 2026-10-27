@@ -1,9 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advancePractice, hideAnswer, previousQuestion, startSession, reconcileSession, moveSession } from '../src/lib/session.ts';
+import { advancePractice, hideAnswer, previousQuestion, startSession, reconcileSession, moveSession, updateSession } from '../src/lib/session.ts';
 import { parseCards } from '../server/parser.ts';
 
 const cards = parseCards('# question\nOne\n# answer\nA\n# question\nTwo\n# answer\nB', 'session.md');
+
+test('snapshot loads shuffle additions and reset missing focus; mutations append and retain position', t => {
+  t.mock.method(Math, 'random', () => 0);
+  const [first, removed, last, addedA, addedB] = parseCards(
+    ['First', 'Removed', 'Last', 'Added A', 'Added B'].map(question => `# question\n${question}\n# answer\nA`).join('\n'), 'policies.md');
+  const previous = { order: [first, removed, last], index: 1, revealed: true };
+  const incoming = [first, last, addedA, addedB];
+  const snapshot = reconcileSession(previous, incoming);
+  assert.deepEqual(snapshot.order.map(card => card.id), [first, last, addedB, addedA].map(card => card.id));
+  assert.equal(snapshot.index, 0);
+  assert.equal(snapshot.revealed, false);
+  const mutation = updateSession(previous, incoming);
+  assert.deepEqual(mutation.order, incoming);
+  assert.equal(mutation.index, 1);
+  assert.equal(mutation.order[mutation.index].id, last.id);
+  assert.equal(mutation.revealed, false);
+});
+
 test('reconciliation retains current answer, removes deleted cards and adds new cards once', () => {
   const previous = { order: cards, index: 1, revealed: true };
   const added = parseCards('# question\nThree\n# answer\nC', 'new.md')[0];
@@ -29,7 +47,7 @@ test('invalid session indices and duplicate IDs fail explicitly instead of reset
   assert.throws(() => reconcileSession(startSession(cards), [cards[0], cards[0]]), /duplicate card IDs/);
 });
 
-test('primary action reveals, advances without hiding, and starts a new round at the end', () => {
+test('primary action reveals, advances to an unrevealed question, and starts a new round at the end', () => {
   const initial = { order: cards, index: 0, revealed: false };
   const revealed = advancePractice(initial);
   assert.equal(revealed.index, 0);

@@ -1,18 +1,18 @@
 import { DeckRequestError, fetchDeck } from './deck-client';
 import type { DeckState } from './types';
 
-type SyncCallbacks = {
+type LoaderCallbacks = {
   onDeck(deck: DeckState): void;
   onError(message: string): void;
   onLoading(loading: boolean): void;
 };
 
-export function createDeckSync(callbacks: SyncCallbacks, request = fetchDeck) {
+export function createDeckLoader(callbacks: LoaderCallbacks, request = fetchDeck) {
   let revision = 0;
   let closed = false;
 
   async function refresh(): Promise<void> {
-    if (closed) throw new Error('Cannot refresh a closed deck synchronization session.');
+    if (closed) throw new Error('Cannot refresh a closed deck loader.');
     const requestRevision = ++revision;
     let next: DeckState;
     try {

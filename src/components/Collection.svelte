@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sourceLabel } from '../lib/card-mutations';
+  import { sourceLabel } from '../lib/source-names';
   let { files, total, available, source = $bindable(), onChange }: {
     files: string[]; total: number; available: number;
     source: string; onChange: () => void;

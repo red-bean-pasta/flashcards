@@ -7,15 +7,15 @@
   import Flashcard from './components/Flashcard.svelte';
   import type { DeckState, MutationRequest, MutationResult } from './lib/types';
   import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession, updateSession } from './lib/session';
-  import { createDeckSync } from './lib/deck-sync';
+  import { createDeckLoader } from './lib/deck-loader';
 
-  let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {}, updatedAt: '' });
+  let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
   let selectedSource = $state('');
   let networkError = $state('');
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
-  let sync: ReturnType<typeof createDeckSync> | undefined;
+  let loader: ReturnType<typeof createDeckLoader> | undefined;
   const { order, index, revealed } = $derived(session);
   const current = $derived(order[index]);
   const blocked = $derived(deck.errors.length > 0 || !!networkError);
@@ -42,8 +42,8 @@
   }
 
   function refresh() {
-    if (!sync) throw new Error('Cannot refresh before deck synchronization is mounted.');
-    return sync.refresh();
+    if (!loader) throw new Error('Cannot refresh before deck loader is mounted.');
+    return loader.refresh();
   }
 
   function handleKey(event: KeyboardEvent) {
@@ -56,13 +56,13 @@
   }
 
   onMount(() => {
-    sync = createDeckSync({
+    loader = createDeckLoader({
       onDeck: applyDeck,
       onError: message => { networkError = message; },
       onLoading: value => { loading = value; },
     });
-    void sync.refresh();
-    return sync.close;
+    void loader.refresh();
+    return loader.close;
   });
 </script>
 

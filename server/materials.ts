@@ -4,18 +4,18 @@ import { CardParseError, parseCards } from './parser.js';
 import { isFilesystemError, MaterialReadError, readMaterial, scanMarkdown } from './filesystem.js';
 import type { Card, DeckState } from '../src/lib/types.js';
 
-type CachedMaterial = { text: string; cards: Card[] };
+type CachedMaterial = { text: string; cards: Card[]; revision: string };
 
 export function createMaterialLoader(directory: string, parse: typeof parseCards = parseCards) {
   const cache = new Map<string, CachedMaterial>();
 
-  async function loadCards(filename: string, source: string): Promise<Card[]> {
+  async function loadMaterial(filename: string, source: string): Promise<CachedMaterial> {
     const text = await readMaterial(filename, source);
     const cached = cache.get(source);
-    if (cached?.text === text) return cached.cards;
-    const cards = parse(text, source);
-    cache.set(source, { text, cards });
-    return cards;
+    if (cached?.text === text) return cached;
+    const material = { text, cards: parse(text, source), revision: materialRevision(text) };
+    cache.set(source, material);
+    return material;
   }
 
   function pruneCache(sources: string[]): void {
@@ -30,15 +30,16 @@ export function createMaterialLoader(directory: string, parse: typeof parseCards
     const files = filenames.map(file => path.relative(directory, file).split(path.sep).join('/'));
     for (const [index, filename] of filenames.entries()) {
       try {
-        cards.push(...await loadCards(filename, files[index]));
-        revisions[files[index]] = materialRevision(cache.get(files[index])!.text);
+        const material = await loadMaterial(filename, files[index]);
+        cards.push(...material.cards);
+        revisions[files[index]] = material.revision;
       } catch (error) {
         if (!(error instanceof CardParseError || error instanceof MaterialReadError)) throw error;
         errors.push(error.message);
       }
     }
     pruneCache(files);
-    return { cards: errors.length ? [] : cards, files, revisions, errors, updatedAt: new Date().toISOString() };
+    return { cards: errors.length ? [] : cards, files, revisions, errors };
   }
 
   async function load(): Promise<DeckState> {
@@ -47,7 +48,7 @@ export function createMaterialLoader(directory: string, parse: typeof parseCards
       filenames = (await scanMarkdown(directory)).filter(filename => path.basename(filename).toLowerCase() !== 'removed.md');
     } catch (error) {
       if (!isFilesystemError(error)) throw error;
-      return { cards: [], files: [], revisions: {}, errors: [error.message], updatedAt: new Date().toISOString() };
+      return { cards: [], files: [], revisions: {}, errors: [error.message] };
     }
     return collectMaterials(filenames);
   }

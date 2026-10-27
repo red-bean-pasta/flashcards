@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { sourceLabel } from '../lib/card-mutations';
+  import { sourceLabel } from '../lib/source-names';
 
   let { files, text = $bindable(), chosen = $bindable(), disabled }: {
     files: string[]; text: string; chosen: string; disabled: boolean;

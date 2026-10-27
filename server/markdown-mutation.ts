@@ -1,4 +1,4 @@
-import { CardParseError, parseCardRanges, parseCards } from './parser.js';
+import { CardParseError, parseCardRanges } from './parser.js';
 import { MutationError } from './mutation-contract.js';
 import type { MutationRequest } from '../src/lib/types.js';
 
@@ -6,9 +6,9 @@ function cardMarkdown(question: string, answer: string, eol: string): string {
   const normalize = (text: string) => text.trim().replace(/\r\n?|\n/g, eol);
   const text = `# question${eol}${normalize(question)}${eol}${eol}# answer${eol}${normalize(answer)}${eol}${eol}`;
   try {
-    const cards = parseCards(text, 'Card input');
-    if (cards.length !== 1 || cards[0].question !== question.trim().replace(/\r\n?/g, '\n') ||
-        cards[0].answer !== answer.trim().replace(/\r\n?/g, '\n')) {
+    const entries = parseCardRanges(text, 'Card input');
+    if (entries.length !== 1 || entries[0].content.question !== question.trim().replace(/\r\n?/g, '\n') ||
+        entries[0].content.answer !== answer.trim().replace(/\r\n?/g, '\n')) {
       throw new MutationError('Card content cannot contain card markers or standalone --- separators.');
     }
   } catch (error) {

@@ -6,6 +6,10 @@ const filesystemCodes = new Set([
   'EEXIST', 'EMFILE', 'ENFILE', 'ESTALE', 'ELOOP', 'ENAMETOOLONG', 'ENOSPC',
 ]);
 
+export function hasFilesystemCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
 export function isFilesystemError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error &&
     typeof error.code === 'string' && filesystemCodes.has(error.code);

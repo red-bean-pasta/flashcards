@@ -2,13 +2,14 @@ import { readFile, realpath, rename, unlink, writeFile, stat, lstat, link } from
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MutationError } from './mutation-contract.js';
+import { hasFilesystemCode } from './filesystem.js';
 
 export type FileChange = { filename: string; before: string | null; after: string };
 
 export async function readOptional(filename: string): Promise<string | null> {
   try { return await readFile(filename, 'utf8'); }
   catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!hasFilesystemCode(error, 'ENOENT')) throw error;
     return null;
   }
 }
@@ -16,9 +17,9 @@ export async function readOptional(filename: string): Promise<string | null> {
 async function writeTarget(filename: string): Promise<string> {
   try { return await realpath(filename); }
   catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!hasFilesystemCode(error, 'ENOENT')) throw error;
     // A dangling link is an external filesystem error, not an absent destination.
-    const entry = await lstat(filename).catch(failure => { if (failure.code === 'ENOENT') return null; throw failure; });
+    const entry = await lstat(filename).catch(failure => { if (hasFilesystemCode(failure, 'ENOENT')) return null; throw failure; });
     if (entry?.isSymbolicLink()) throw error;
     return path.join(await realpath(path.dirname(filename)), path.basename(filename));
   }
@@ -31,7 +32,7 @@ export async function atomicWrite(filename: string, text: string, expected: stri
   let mode = 0o600;
   try { mode = (await stat(target)).mode; }
   catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!hasFilesystemCode(error, 'ENOENT')) throw error;
   }
   await writeFile(temporary, text, { flag: 'wx', mode });
   try {
@@ -39,7 +40,7 @@ export async function atomicWrite(filename: string, text: string, expected: stri
     if (expected === null) await link(temporary, target);
     else await rename(temporary, target);
   }
-  finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+  finally { await unlink(temporary).catch(error => { if (!hasFilesystemCode(error, 'ENOENT')) throw error; }); }
 }
 
 function parseJournal(text: string): FileChange[] {

@@ -25,7 +25,7 @@ export function isCard(value: unknown): value is Card {
 function parseDeckResponse(value: unknown): DeckState {
   if (!isRecord(value) || !Array.isArray(value.cards) || !value.cards.every(isCard) ||
       !isStringArray(value.files) || !isRecord(value.revisions) ||
-      !Object.values(value.revisions).every(revision => typeof revision === 'string') || !isStringArray(value.errors) || typeof value.updatedAt !== 'string') {
+      !Object.values(value.revisions).every(revision => typeof revision === 'string') || !isStringArray(value.errors)) {
     throw new DeckRequestError('The server returned an invalid deck response.');
   }
   if (value.errors.length && value.cards.length) {
@@ -35,7 +35,7 @@ function parseDeckResponse(value: unknown): DeckState {
   if (new Set(ids).size !== ids.length) {
     throw new DeckRequestError('The server returned duplicate card IDs.');
   }
-  return { cards: value.cards, files: value.files, revisions: value.revisions as Record<string, string>, errors: value.errors, updatedAt: value.updatedAt };
+  return { cards: value.cards, files: value.files, revisions: value.revisions as Record<string, string>, errors: value.errors };
 }
 
 async function requestDeck(fetcher: typeof fetch): Promise<Response> {

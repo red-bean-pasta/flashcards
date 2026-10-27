@@ -11,9 +11,8 @@ export class CardParseError extends Error {
   }
 }
 
-export type CardRange = { card: Card; start: number; end: number };
-
 type CardText = { question: string; answer: string; line: number };
+export type CardRange = { content: CardText; start: number; end: number };
 
 function validatePreamble(text: string, source: string, structure: MarkdownStructure): void {
   if (extractContent(text, 0, structure.markers[0]?.start ?? text.length, structure.ignored)) {
@@ -61,7 +60,7 @@ export function parseCardRanges(text: string, source: string): CardRange[] {
     content.question = content.question.replace(/\r\n?/g, '\n');
     content.answer = content.answer.replace(/\r\n?/g, '\n');
     entries.push({
-      card: createCard(content, source, entries.length),
+      content,
       start: structure.markers[index].start,
       end: structure.markers[index + 2]?.start ?? text.length,
     });
@@ -70,5 +69,5 @@ export function parseCardRanges(text: string, source: string): CardRange[] {
 }
 
 export function parseCards(input: string, source: string): Card[] {
-  return parseCardRanges(input, source).map(entry => entry.card);
+  return parseCardRanges(input, source).map((entry, index) => createCard(entry.content, source, index));
 }

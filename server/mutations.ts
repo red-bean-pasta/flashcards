@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { MutationError, validateMutation, destination } from './mutation-contract.js';
 import { buildChange, appendEntry } from './markdown-mutation.js';
-import { parseCards } from './parser.js';
+import { parseCardRanges, parseCards } from './parser.js';
 import { materialRevision } from './revision.js';
 import { atomicWrite, createWriteTransaction, readOptional } from './write-transaction.js';
 import type { MutationResult } from '../src/lib/types.js';
@@ -22,7 +22,7 @@ export function createMutations(directory: string) {
     const archived = await readOptional(archive);
     const eol = archived?.match(/\r\n|\r|\n/)?.[0] ?? removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
     const nextArchive = appendEntry(archived ?? '', removed, eol);
-    parseCards(nextArchive, 'removed.md');
+    parseCardRanges(nextArchive, 'removed.md');
     await transaction.commit([
       { filename: archive, before: archived, after: nextArchive },
       { filename, before, after },

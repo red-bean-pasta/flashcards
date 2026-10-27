@@ -1,17 +1,5 @@
 import type { Card, DeckState, MutationRequest, MutationResult } from './types';
 
-export function sourceLabel(source: string): string {
-  return source.replace(/\.md$/i, '').split('/').map(part =>
-    part.replace(/[_-]+/g, ' ').replace(/\b\p{L}/gu, letter => letter.toUpperCase())).join(' / ');
-}
-
-export function newSource(label: string): string {
-  const name = label.trim().replace(/\.md$/i, '').normalize('NFKC').toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
-  if (!name) throw new Error('A validated file name must contain a letter or number.');
-  return `${name}.md`;
-}
-
 export function cardPosition(deck: DeckState, card: Card): number {
   const index = deck.cards.filter(item => item.source === card.source).findIndex(item => item.id === card.id);
   if (index < 0) throw new Error('Displayed card is absent from its snapshot.');

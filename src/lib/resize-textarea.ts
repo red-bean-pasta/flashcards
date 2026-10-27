@@ -17,7 +17,6 @@ export function resizeTextarea(node: HTMLTextAreaElement) {
 
   function movePointer(event: PointerEvent): void {
     if (drag) {
-      // A minimum height is a user-facing resize boundary, not error recovery.
       const minimum = Number.parseFloat(getComputedStyle(node).minHeight);
       if (!Number.isFinite(minimum)) throw new Error('Resizable textarea requires a numeric CSS min-height.');
       node.style.height = `${Math.max(minimum, drag.height + event.clientY - drag.y)}px`;

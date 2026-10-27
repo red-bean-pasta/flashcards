@@ -1,29 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DeckRequestError, fetchDeck } from '../src/lib/deck-client.ts';
-import { createDeckSync } from '../src/lib/deck-sync.ts';
+import { createDeckLoader } from '../src/lib/deck-loader.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
-const deck: DeckState = { cards: [], files: [], errors: [], revisions: {}, updatedAt: 'now' };
+const deck: DeckState = { cards: [], files: [], errors: [], revisions: {} };
 const callbacks = () => ({ onDeck(_deck: DeckState) {}, onError(_message: string) {}, onLoading(_loading: boolean) {} });
 
 test('snapshot loader requests data only on explicit refresh', async () => {
   let requests = 0;
-  let external = { ...deck, updatedAt: 'initial' };
+  let external = { ...deck, files: ['initial.md'] };
   const received: DeckState[] = [];
-  const sync = createDeckSync({ ...callbacks(), onDeck: value => received.push(value) }, async () => {
+  const loader = createDeckLoader({ ...callbacks(), onDeck: value => received.push(value) }, async () => {
     requests++;
     return external;
   });
   assert.equal(requests, 0);
-  await sync.refresh();
-  external = { ...deck, updatedAt: 'external edit' };
+  await loader.refresh();
+  external = { ...deck, files: ['external.md'] };
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(requests, 1);
-  assert.deepEqual(received.map(value => value.updatedAt), ['initial']);
-  await sync.refresh();
-  assert.deepEqual(received.map(value => value.updatedAt), ['initial', 'external edit']);
-  sync.close();
+  assert.deepEqual(received.map(value => value.files[0]), ['initial.md']);
+  await loader.refresh();
+  assert.deepEqual(received.map(value => value.files[0]), ['initial.md', 'external.md']);
+  loader.close();
 });
 
 test('HTTP, malformed JSON, invalid shapes and network failures are explicit request errors', async () => {
@@ -43,42 +43,42 @@ test('unexpected transport errors and consumed-body contract failures propagate 
   await assert.rejects(fetchDeck(async () => response), error => error instanceof TypeError && !(error instanceof DeckRequestError));
 });
 
-test('sync recovers only request errors; reconciliation failures retain identity and cause', async () => {
+test('loader recovers only request errors; reconciliation failures retain identity and cause', async () => {
   let diagnostic = '';
   const hooks = { ...callbacks(), onError(message: string) { diagnostic = message; } };
-  const recoverable = createDeckSync(hooks, async () => { throw new DeckRequestError('offline'); });
+  const recoverable = createDeckLoader(hooks, async () => { throw new DeckRequestError('offline'); });
   await recoverable.refresh();
   assert.equal(diagnostic, 'offline');
   recoverable.close();
   diagnostic = '';
   const bug = new TypeError('Broken session invariant', { cause: new Error('root bug') });
-  const broken = createDeckSync({ ...hooks, onDeck() { throw bug; } }, async () => deck);
+  const broken = createDeckLoader({ ...hooks, onDeck() { throw bug; } }, async () => deck);
   await assert.rejects(broken.refresh(), error => error === bug);
   assert.equal(diagnostic, '');
   broken.close();
-  const requestBug = createDeckSync(hooks, async () => { throw bug; });
+  const requestBug = createDeckLoader(hooks, async () => { throw bug; });
   await assert.rejects(requestBug.refresh(), error => error === bug);
   requestBug.close();
 });
 
-test('sync ignores stale responses and responses after unmount', async () => {
+test('loader ignores stale responses and responses after unmount', async () => {
   const requests: Array<(deck: DeckState) => void> = [];
   const received: DeckState[] = [];
-  const sync = createDeckSync({ ...callbacks(), onDeck: deck => received.push(deck) },
+  const loader = createDeckLoader({ ...callbacks(), onDeck: deck => received.push(deck) },
     () => new Promise(resolve => requests.push(resolve)));
-  const first = sync.refresh();
-  const second = sync.refresh();
-  requests[1]({ ...deck, updatedAt: 'new' });
+  const first = loader.refresh();
+  const second = loader.refresh();
+  requests[1]({ ...deck, files: ['new.md'] });
   await second;
-  requests[0]({ ...deck, updatedAt: 'old' });
+  requests[0]({ ...deck, files: ['old.md'] });
   await first;
-  assert.deepEqual(received.map(deck => deck.updatedAt), ['new']);
-  const last = sync.refresh();
-  sync.close();
-  requests[2]({ ...deck, updatedAt: 'after-close' });
+  assert.deepEqual(received.map(deck => deck.files[0]), ['new.md']);
+  const last = loader.refresh();
+  loader.close();
+  requests[2]({ ...deck, files: ['after-close.md'] });
   await last;
   assert.equal(received.length, 1);
-  await assert.rejects(sync.refresh(), /closed/);
+  await assert.rejects(loader.refresh(), /closed/);
 });
 
 test('mutation transport preserves explicit conflicts and rejects invalid success shapes', async () => {

@@ -4,7 +4,8 @@
   import FilePicker from './FilePicker.svelte';
   import { sizeActionButton } from '../lib/size-action-button';
   import { resizeTextarea } from '../lib/resize-textarea';
-  import { cardPosition, newSource, sourceLabel } from '../lib/card-mutations';
+  import { cardPosition } from '../lib/card-mutations';
+  import { resolveSource, sourceLabel } from '../lib/source-names';
   import { DeckRequestError, submitMutation } from '../lib/deck-client';
 
   let { action, card, deck, selectedSource, onSaved, onClose }: {
@@ -22,8 +23,7 @@
   let chosenSource = $state(initial.source);
   let busy = $state(false);
   let error = $state('');
-  const matching = $derived(deck.files.filter(source => sourceLabel(source).toLowerCase() === fileInput.trim().toLowerCase()));
-  const destination = $derived(chosenSource || (matching.length === 1 ? matching[0] : ''));
+  const destination = $derived(resolveSource(deck.files, fileInput, chosenSource));
 
   function close() { if (!busy) onClose(); }
 
@@ -31,10 +31,8 @@
     if (action === 'remove') return { action, source: card!.source, revision: deck.revisions[card!.source], index: cardPosition(deck, card!) };
     if (!question.trim() || !answer.trim()) { error = 'Question and answer are required.'; return; }
     if (action === 'edit') return { action, source: card!.source, revision: deck.revisions[card!.source], index: cardPosition(deck, card!), question, answer };
-    if (!/[\p{L}\p{N}]/u.test(fileInput)) { error = 'Enter a file name.'; return; }
-    if (!destination && matching.length > 1) { error = 'Choose the intended file from the suggestions.'; return; }
-    const source = destination || newSource(fileInput);
-    if (source.toLowerCase() === 'removed.md') { error = 'removed.md is reserved for archived cards.'; return; }
+    if (destination.error) { error = destination.error; return; }
+    const source = destination.source;
     return { action, source, revision: deck.revisions[source] ?? null, question, answer };
   }
 
@@ -71,7 +69,7 @@
     {:else}
       {#if action === 'add'}
         <FilePicker files={deck.files} bind:text={fileInput} bind:chosen={chosenSource} disabled={busy} />
-        {#if !destination && matching.length === 0 && /[\p{L}\p{N}]/u.test(fileInput)}<p class="file-hint">Create {newSource(fileInput)}</p>{/if}
+        {#if destination.create}<p class="file-hint">Create {destination.source}</p>{/if}
       {/if}
       <label for="card-question">Question</label>
       <textarea use:resizeTextarea id="card-question" rows="3" bind:value={question} disabled={busy} required></textarea>

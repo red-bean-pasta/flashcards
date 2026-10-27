@@ -15,14 +15,18 @@ export function shuffleCards(cards: Card[]): Card[] {
   return shuffled;
 }
 
+function assertUniqueCards(cards: Card[]): void {
+  if (new Set(cards.map(card => card.id)).size !== cards.length) {
+    throw new Error('Practice session invariant violated: duplicate card IDs.');
+  }
+}
+
 function assertSession(session: PracticeSession): void {
   const { order, index } = session;
   if (!Number.isInteger(index) || (order.length ? index < 0 || index >= order.length : index !== 0)) {
     throw new Error(`Practice session invariant violated: index ${index}, card count ${order.length}.`);
   }
-  if (new Set(order.map(card => card.id)).size !== order.length) {
-    throw new Error('Practice session invariant violated: duplicate card IDs.');
-  }
+  assertUniqueCards(order);
 }
 
 export function startSession(cards: Card[]): PracticeSession {
@@ -31,29 +35,23 @@ export function startSession(cards: Card[]): PracticeSession {
   return session;
 }
 
-function retainExistingCards(order: Card[], cards: Card[]): Card[] {
+function partitionCards(order: Card[], cards: Card[]): { retained: Card[]; added: Card[] } {
+  assertUniqueCards(cards);
   const byId = new Map(cards.map(card => [card.id, card]));
   const retained: Card[] = [];
   for (const card of order) {
     const replacement = byId.get(card.id);
     if (replacement) retained.push(replacement);
   }
-  return retained;
-}
-
-function mergeNewCards(order: Card[], cards: Card[]): Card[] {
-  const retained = retainExistingCards(order, cards);
   const retainedIds = new Set(retained.map(card => card.id));
-  return [...retained, ...shuffleCards(cards.filter(card => !retainedIds.has(card.id)))];
+  return { retained, added: cards.filter(card => !retainedIds.has(card.id)) };
 }
 
 export function reconcileSession(previous: PracticeSession, cards: Card[]): PracticeSession {
   assertSession(previous);
-  if (new Set(cards.map(card => card.id)).size !== cards.length) {
-    throw new Error('Cannot reconcile a deck with duplicate card IDs.');
-  }
+  const { retained, added } = partitionCards(previous.order, cards);
   const current = previous.order[previous.index];
-  const order = mergeNewCards(previous.order, cards);
+  const order = [...retained, ...shuffleCards(added)];
   const position = current ? order.findIndex(card => card.id === current.id) : -1;
   // Removal of the current card explicitly starts at the first remaining card.
   return { order, index: position === -1 ? 0 : position, revealed: position === -1 ? false : previous.revealed };
@@ -91,11 +89,9 @@ export function previousQuestion(previous: PracticeSession): PracticeSession {
 // In-app operations retain round order; only removal of the current card changes focus.
 export function updateSession(previous: PracticeSession, cards: Card[]): PracticeSession {
   assertSession(previous);
-  if (new Set(cards.map(card => card.id)).size !== cards.length) throw new Error('Mutation produced duplicate card IDs.');
+  const { retained, added } = partitionCards(previous.order, cards);
   const current = previous.order[previous.index];
-  const retained = retainExistingCards(previous.order, cards);
-  const retainedIds = new Set(retained.map(card => card.id));
-  const order = [...retained, ...cards.filter(card => !retainedIds.has(card.id))];
+  const order = [...retained, ...added];
   const position = current ? order.findIndex(card => card.id === current.id) : -1;
   const index = position >= 0 ? position : (order.length ? Math.min(previous.index, order.length - 1) : 0);
   const result = { order, index, revealed: position >= 0 ? previous.revealed : false };

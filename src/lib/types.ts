@@ -12,7 +12,6 @@ export interface DeckState {
   files: string[];
   errors: string[];
   revisions: Record<string, string>;
-  updatedAt: string;
 }
 
 export type MutationRequest = { source: string; revision: string | null } & (
