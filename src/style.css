@@ -237,7 +237,7 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
+  flex-wrap: wrap-reverse;
   gap: 8px 18px;
   color: #909789;
   font-size: var(--collection-font-size);
