@@ -6,7 +6,7 @@ import type { DeckState, MutationRequest } from '../types.js';
 import { GraphError, type GraphClient, type GraphItem } from './graph.js';
 import { OneDriveAuthError } from './auth.js';
 import { createOperationJournal, type PendingOperation, type WritePlan } from './journal.js';
-import { captureOperation, planContent, projectOperation, type CardOperation } from './operations.js';
+import { captureOperation, planContent, createOperationProjector, type CardOperation } from './operations.js';
 
 export function asDeckError(error: unknown): never {
   if (error instanceof GraphError || error instanceof OneDriveAuthError || error instanceof CardParseError || error instanceof CardInputError) {
@@ -17,6 +17,7 @@ export function asDeckError(error: unknown): never {
 
 export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse = parseBrowserCards) {
   if (!folder.folder) throw new Error('A OneDrive deck requires a folder item.');
+  const projectOperation = createOperationProjector(parse);
   const sources = new Map<string, GraphItem>();
   const journal = createOperationJournal(graph, folder.id);
   let saving = false;
@@ -126,7 +127,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
       await journal.release(pending.id);
       if (!result.eTag) throw new Error('Graph transport returned a saved file without an eTag.');
       sources.set(operation.source, result);
-      return projectOperation(deck, operation, result.eTag, parse, text);
+      return projectOperation(deck, operation, result.eTag, text);
     } catch (error) { asDeckError(error); }
     finally { saving = false; }
   }

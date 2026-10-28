@@ -14,6 +14,7 @@ export function createDeckLoader(callbacks: LoaderCallbacks, request = fetchDeck
   async function refresh(): Promise<void> {
     if (closed) throw new Error('Cannot refresh a closed deck loader.');
     const requestRevision = ++revision;
+    callbacks.onLoading(true);
     let next: DeckState;
     try {
       next = await request();

@@ -9,17 +9,24 @@ export interface GraphItem {
   downloadUrl?: string;
 }
 
+/** Service failure metadata; status 0 denotes a transport or response-format failure. */
+export interface GraphFailure {
+  status: number;
+  code: string;
+  retryAfter?: string | null;
+}
+
 export class GraphError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly code: string,
-    public readonly uncertain = false,
-    public readonly retryAfter: string | null = null,
-    options?: ErrorOptions,
-  ) {
+  readonly status: number;
+  readonly code: string;
+  readonly retryAfter: string | null;
+
+  constructor(message: string, failure: GraphFailure, public readonly uncertain = false, options?: ErrorOptions) {
     super(message, options);
     this.name = 'GraphError';
+    this.status = failure.status;
+    this.code = failure.code;
+    this.retryAfter = failure.retryAfter ?? null;
   }
 }
 
@@ -28,7 +35,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function invalidResponse(write: boolean, cause?: unknown): GraphError {
-  return new GraphError(write ? 'OneDrive returned an invalid save response; the save outcome is unknown. Refresh before trying again.' : 'OneDrive returned an invalid response.', 0, 'invalidResponse', write, null, cause === undefined ? undefined : { cause });
+  return new GraphError(write ? 'OneDrive returned an invalid save response; the save outcome is unknown. Refresh before trying again.' : 'OneDrive returned an invalid response.', { status: 0, code: 'invalidResponse' }, write, cause === undefined ? undefined : { cause });
 }
 
 function parseItem(value: unknown, write = false): GraphItem {
@@ -74,10 +81,10 @@ function graphUrl(value: string): string {
   let url: URL;
   try { url = new URL(value); } catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    throw new GraphError('OneDrive returned an invalid pagination URL.', 0, 'unsafePagination');
+    throw new GraphError('OneDrive returned an invalid pagination URL.', { status: 0, code: 'unsafePagination' });
   }
   if (url.origin !== 'https://graph.microsoft.com' || !url.pathname.startsWith('/v1.0/') || url.username || url.password || url.hash) {
-    throw new GraphError('OneDrive returned an unsafe pagination URL.', 0, 'unsafePagination');
+    throw new GraphError('OneDrive returned an unsafe pagination URL.', { status: 0, code: 'unsafePagination' });
   }
   return url.href;
 }
@@ -98,7 +105,7 @@ async function responseJson(response: Response, write: boolean): Promise<unknown
   try { return await response.json(); } catch (error) {
     if (error instanceof SyntaxError) throw invalidResponse(write, error);
     if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
-    throw new GraphError(write ? 'The OneDrive save outcome is unknown. Refresh before trying again.' : 'The OneDrive response was interrupted. Try refreshing.', 0, 'networkError', write, null, { cause: error });
+    throw new GraphError(write ? 'The OneDrive save outcome is unknown. Refresh before trying again.' : 'The OneDrive response was interrupted. Try refreshing.', { status: 0, code: 'networkError' }, write, { cause: error });
   }
 }
 
@@ -124,14 +131,14 @@ async function httpError(response: Response, write: boolean): Promise<GraphError
     : response.status === 409 || response.status === 412 ? 'OneDrive changed since this snapshot. Refresh before saving again.'
     : uncertain ? 'The OneDrive save outcome is unknown. Refresh before trying again.'
     : `OneDrive request failed (${response.status}).`;
-  return new GraphError(message, response.status, code, uncertain, response.headers.get('Retry-After'), bodyFailure ? { cause: bodyFailure } : undefined);
+  return new GraphError(message, { status: response.status, code, retryAfter: response.headers.get('Retry-After') }, uncertain, bodyFailure ? { cause: bodyFailure } : undefined);
 }
 
 async function downloadText(response: Response): Promise<string> {
   if (response.bodyUsed) throw new TypeError('The OneDrive download body was already consumed.');
   try { return await response.text(); } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
-    throw new GraphError('The OneDrive download was interrupted. Try refreshing.', 0, 'networkError', false, null, { cause: error });
+    throw new GraphError('The OneDrive download was interrupted. Try refreshing.', { status: 0, code: 'networkError' }, false, { cause: error });
   }
 }
 
@@ -147,7 +154,7 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     let response: Response;
     try { response = await fetcher(url, { ...init, headers, redirect: authenticated ? 'error' : 'follow' }); } catch (error) {
       if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
-      throw new GraphError(write ? 'The OneDrive save outcome is unknown. Refresh before trying again.' : 'Could not reach OneDrive. Check your connection.', 0, 'networkError', write, null, { cause: error });
+      throw new GraphError(write ? 'The OneDrive save outcome is unknown. Refresh before trying again.' : 'Could not reach OneDrive. Check your connection.', { status: 0, code: 'networkError' }, write, { cause: error });
     }
     if (!response.ok) throw await httpError(response, write);
     if (write && response.status !== 200 && response.status !== 201) throw invalidResponse(true);
@@ -192,7 +199,7 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
       const after = requireFile(await getItem(id));
       if (before.eTag === after.eTag) return { id, text, revision: after.eTag };
     }
-    throw new GraphError('OneDrive kept changing during the read. Refresh and try again.', 409, 'unstableRead');
+    throw new GraphError('OneDrive kept changing during the read. Refresh and try again.', { status: 409, code: 'unstableRead' });
   }
 
   return {

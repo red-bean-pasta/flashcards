@@ -17,6 +17,7 @@
   let networkError = $state('');
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
+  let storageBusy = $state(false);
   let activeStorage = $state<'local' | 'onedrive'>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
   let backend = $state<DeckBackend | undefined>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
   let loader: ReturnType<typeof createDeckLoader> | undefined;
@@ -40,6 +41,7 @@
   }
 
   async function saveCard(request: MutationRequest) {
+    if (loading || storageBusy) throw new Error('Cannot save while the card source is busy.');
     if (!backend) throw new Error('Saving requires a connected card source.');
     const savingBackend = backend;
     const next = await savingBackend.mutate(request, deck);
@@ -57,7 +59,6 @@
       onError: message => { networkError = message; },
       onLoading: value => { loading = value; },
     }, () => currentBackend.load());
-    loading = true;
     void loader.refresh();
   }
 
@@ -94,7 +95,7 @@
 <svelte:window onkeydown={handleKey} />
 
 <div class="shell" class:has-progress={showProgress}>
-  <OneDriveConnection onBackend={switchBackend} active={activeStorage} canSwitch={!dialogAction} />
+  <OneDriveConnection onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction && !loading} />
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
@@ -102,7 +103,7 @@
           <section class="notice" role="alert">
             <h1 class="section-label">{networkError ? 'Connection error' : 'Check your notes'}</h1>
             {#each deck.errors as error}<pre>{error}</pre>{/each}
-            {#if networkError}<p>{networkError}</p><button use:sizeActionButton class="primary-action" onclick={refresh}><span>Retry</span></button>{/if}
+            {#if networkError}<p>{networkError}</p><button use:sizeActionButton class="primary-action" disabled={loading || storageBusy} onclick={refresh}><span>Retry</span></button>{/if}
           </section>
         {:else if loading}
           <p class="section-label" role="status">Loading…</p>
@@ -125,10 +126,10 @@
         <Collection files={deck.files} total={deck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
-          <button class="text-action" disabled={loading || blocked || !backend} onclick={() => { dialogAction = 'add'; }}>Add</button>
-          <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
-          <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'edit'; }}>Edit</button>
-          <button class="text-action" disabled={loading || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !backend} onclick={() => { dialogAction = 'add'; }}>Add</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !current} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !current} onclick={() => { dialogAction = 'edit'; }}>Edit</button>
+          <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
         </nav>
       </footer>
     </div>

@@ -122,21 +122,27 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
       if (!(cause instanceof TypeError) && !(cause instanceof DOMException && cause.name === 'NetworkError')) throw cause;
       throw new OneDriveAuthError('Could not reach Microsoft sign-in. Check your connection and SPA redirect registration.', 'network', { cause });
     }
-    // Parse text separately so consumed-body programming errors retain their identity.
+    const payload = await readTokenPayload(response);
+    if (!response.ok) throw tokenRequestError(payload, response.status);
+    return tokensFromPayload(payload, oldRefreshToken);
+  }
+  async function readTokenPayload(response: Response): Promise<unknown> {
+    // Read separately so consumed-body programming errors retain their identity.
     const body = await response.text();
-    let payload: unknown;
-    try { payload = JSON.parse(body); }
+    try { return JSON.parse(body); }
     catch (cause) {
       if (!(cause instanceof SyntaxError)) throw cause;
       throw new OneDriveAuthError('Microsoft returned an invalid authentication response.', 'invalid_response', { cause });
     }
-    if (!response.ok) {
-      const error = isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'token_request_failed';
-      if (['invalid_grant', 'interaction_required', 'login_required', 'consent_required'].includes(error)) {
-        throw new OneDriveAuthError(`Microsoft requires you to reconnect OneDrive (${error}).`, 'reconnect_required');
-      }
-      throw new OneDriveAuthError(`Microsoft sign-in failed (${error}, HTTP ${response.status}). Check the app registration and reconnect.`, 'oauth');
+  }
+  function tokenRequestError(payload: unknown, status: number): OneDriveAuthError {
+    const error = isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'token_request_failed';
+    if (['invalid_grant', 'interaction_required', 'login_required', 'consent_required'].includes(error)) {
+      return new OneDriveAuthError(`Microsoft requires you to reconnect OneDrive (${error}).`, 'reconnect_required');
     }
+    return new OneDriveAuthError(`Microsoft sign-in failed (${error}, HTTP ${status}). Check the app registration and reconnect.`, 'oauth');
+  }
+  function tokensFromPayload(payload: unknown, oldRefreshToken?: string): Tokens {
     if (!isRecord(payload) || typeof payload.access_token !== 'string' || !payload.access_token
         || typeof payload.expires_in !== 'number' || !Number.isFinite(payload.expires_in) || payload.expires_in <= 0
         || typeof payload.token_type !== 'string' || payload.token_type.toLowerCase() !== 'bearer'
@@ -146,6 +152,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     return { accessToken: payload.access_token, refreshToken: payload.refresh_token as string | undefined ?? oldRefreshToken,
       expiresAt: now() + payload.expires_in * 1000 };
   }
+
   async function completeSignIn(): Promise<boolean> {
     const url = new URL(location.href);
     if (!url.searchParams.has('code') && !url.searchParams.has('error')) return false;

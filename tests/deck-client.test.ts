@@ -81,6 +81,27 @@ test('loader ignores stale responses and responses after unmount', async () => {
   await assert.rejects(loader.refresh(), /closed/);
 });
 
+test('refresh announces loading before requesting a snapshot, including every subsequent refresh', async () => {
+  let loading = false;
+  let finish!: (value: DeckState) => void;
+  const states: boolean[] = [];
+  const loader = createDeckLoader({
+    ...callbacks(),
+    onLoading(value) { loading = value; states.push(value); },
+  }, () => {
+    assert.equal(loading, true, 'mutation controls must be blocked before the request starts');
+    return new Promise(resolve => { finish = resolve; });
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const refreshing = loader.refresh();
+    assert.equal(loading, true);
+    finish(deck);
+    await refreshing;
+    assert.equal(loading, false);
+  }
+  assert.deepEqual(states, [true, false, true, false]);
+});
+
 test('mutation transport preserves explicit conflicts and rejects invalid success shapes', async () => {
   const { submitMutation } = await import('../src/lib/deck-client.ts');
   const request = { action: 'add' as const, source: 'default.md', revision: null, question: 'Q', answer: 'A' };

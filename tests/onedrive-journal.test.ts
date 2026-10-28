@@ -24,13 +24,13 @@ function fixture(initial?: unknown) {
     },
     async readText(id: string) {
       assert.equal(id, 'journal');
-      if (text === null) throw new GraphError('missing', 404, 'itemNotFound');
+      if (text === null) throw new GraphError('missing', { status: 404, code: 'itemNotFound' });
       return { id, revision: `j${revision}`, text };
     },
     async createFile(folderId: string, name: string, value: string) {
       assert.equal(folderId, 'root');
       assert.equal(name, '.flashcards-operation.json');
-      if (text !== null) throw new GraphError('exists', 409, 'nameAlreadyExists');
+      if (text !== null) throw new GraphError('exists', { status: 409, code: 'nameAlreadyExists' });
       writes.push({ id: name, revision: null, text: value });
       if (!nextWriteError || commitOnError) { text = value; revision++; }
       if (nextWriteError) { const error = nextWriteError; nextWriteError = undefined; throw error; }
@@ -40,7 +40,7 @@ function fixture(initial?: unknown) {
       assert.equal(id, 'journal');
       writes.push({ id, revision: expected, text: value });
       if (replaceBeforeWrite !== undefined) { text = JSON.stringify(replaceBeforeWrite); revision++; replaceBeforeWrite = undefined; }
-      if (expected !== `j${revision}`) throw new GraphError('stale', 412, 'preconditionFailed');
+      if (expected !== `j${revision}`) throw new GraphError('stale', { status: 412, code: 'preconditionFailed' });
       if (!nextWriteError || commitOnError) { text = value; revision++; }
       if (nextWriteError) { const error = nextWriteError; nextWriteError = undefined; throw error; }
       return { id, name: '.flashcards-operation.json', eTag: `j${revision}`, file: {} };
@@ -111,13 +111,13 @@ test('CAS race never overwrites the winning journal operation', async () => {
 
 test('unknown journal writes are confirmed only by exact journal content without repeating writes', async () => {
   const f = fixture();
-  f.fail(new GraphError('unknown', 503, 'server', true), true);
+  f.fail(new GraphError('unknown', { status: 503, code: 'server' }, true), true);
   await f.journal.claim(operation());
   assert.equal(f.writes.length, 1);
-  f.fail(new GraphError('unknown', 0, 'network', true), true);
+  f.fail(new GraphError('unknown', { status: 0, code: 'network' }, true), true);
   await f.journal.update({ ...operation(), stage: 'source-writing' });
   assert.equal(f.writes.length, 2);
-  f.fail(new GraphError('unknown', 0, 'network', true), true);
+  f.fail(new GraphError('unknown', { status: 0, code: 'network' }, true), true);
   await f.journal.release('op1');
   assert.equal(f.writes.length, 3);
   assert.deepEqual(f.document(), { version: 1, operation: null });
@@ -125,12 +125,12 @@ test('unknown journal writes are confirmed only by exact journal content without
 
 test('unconfirmed journal writes fail explicitly even when operation id is the same', async () => {
   const absent = fixture();
-  absent.fail(new GraphError('unknown', 0, 'network', true));
+  absent.fail(new GraphError('unknown', { status: 0, code: 'network' }, true));
   await assert.rejects(absent.journal.claim(operation()), error => error instanceof DeckRequestError && /unknown/.test(error.message));
   assert.equal(absent.writes.length, 1);
   const active = fixture({ version: 1, operation: operation() });
   await active.journal.inspect();
-  active.fail(new GraphError('unknown', 0, 'network', true));
+  active.fail(new GraphError('unknown', { status: 0, code: 'network' }, true));
   await assert.rejects(active.journal.update({ ...operation(), stage: 'source-writing' }), DeckRequestError);
   assert.equal(active.document().operation.stage, 'source-ready');
 });

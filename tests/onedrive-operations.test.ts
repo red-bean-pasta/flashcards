@@ -4,12 +4,13 @@ import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { CardParseError, parseCardRanges } from '../src/lib/card-ranges.ts';
 import { CardInputError } from '../src/lib/card-text.ts';
 import { DeckRequestError } from '../src/lib/deck-client.ts';
-import { captureOperation, planContent, projectOperation } from '../src/lib/onedrive/operations.ts';
+import { captureOperation, planContent, createOperationProjector } from '../src/lib/onedrive/operations.ts';
 import type { CardOperation } from '../src/lib/onedrive/operations.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
 const entry = (question: string, answer = 'Answer') => `# question\n${question}\n\n# answer\n${answer}\n\n`;
 const parse: typeof parseBrowserCards = (text, source) => parseBrowserCards(text, source, text => text);
+const projectOperation = createOperationProjector(parse);
 const pair = { question: 'Same', answer: 'Answer' };
 function snapshot(): DeckState {
   return {
@@ -87,7 +88,7 @@ test('snapshot editing preserves all occurrence identities and unrelated same-pa
   const deck = snapshot();
   const originalCards = deck.cards.slice();
   const operation = captureOperation(deck, { action: 'edit', source: 'deck.md', revision: 'old', index: 0, question: 'Changed', answer: 'New' });
-  const projected = projectOperation(deck, operation, 'saved', parse);
+  const projected = projectOperation(deck, operation, 'saved');
   const sourceCards = projected.cards.filter(card => card.source === 'deck.md');
   assert.deepEqual(sourceCards.map(card => card.question), ['Changed', 'Other', 'Changed']);
   assert.deepEqual(sourceCards.map(card => card.id), originalCards.slice(0, 3).map(card => card.id));
@@ -103,7 +104,7 @@ test('snapshot editing preserves all occurrence identities and unrelated same-pa
 test('snapshot removal removes all source matches while preserving other sources and remaining identities', () => {
   const deck = snapshot();
   const operation = captureOperation(deck, { action: 'remove', source: 'deck.md', revision: 'old', index: 2 });
-  const projected = projectOperation(deck, operation, 'saved', parse);
+  const projected = projectOperation(deck, operation, 'saved');
   assert.equal(projected.cards.length, 2);
   assert.equal(projected.cards.find(card => card.source === 'deck.md'), deck.cards[1]);
   assert.equal(projected.cards.find(card => card.source === 'elsewhere.md'), deck.cards[3]);
@@ -119,14 +120,14 @@ test('add appends exactly one matching card and retains existing snapshot occurr
   assert.equal(planned.text, entry('Same') + entry('Same'));
   assert.equal(planned.matched, 0);
   assert.equal(planned.removed, '');
-  const projected = projectOperation(deck, operation, 'saved', parse);
+  const projected = projectOperation(deck, operation, 'saved');
   assert.equal(projected.cards.length, 5);
   const source = projected.cards.filter(card => card.source === 'deck.md');
   assert.deepEqual(source.slice(0, 3), deck.cards.slice(0, 3));
   assert.equal(source[3].question, 'Same');
   assert.ok(!deck.cards.some(card => card.id === source[3].id));
   const empty: DeckState = { cards: [], files: [], errors: [], revisions: {} };
-  const created = projectOperation(empty, operation, 'new', parse);
+  const created = projectOperation(empty, operation, 'new');
   assert.deepEqual(created.files, ['deck.md']);
   assert.equal(created.cards.length, 1);
 });
@@ -136,8 +137,40 @@ test('saved source positions update without importing external additions into th
   const deck: DeckState = { cards, files: ['deck.md'], errors: [], revisions: { 'deck.md': 'old' } };
   const operation: CardOperation = { source: 'deck.md', action: 'edit', original: cards[0], replacement: { question: 'Changed\n\nparagraph', answer: 'Answer' } };
   const saved = entry('External') + entry('Changed\n\nparagraph') + entry('Two');
-  const result = projectOperation(deck, operation, 'new', (text, source) => parseBrowserCards(text, source, text => text), saved);
+  const result = projectOperation(deck, operation, 'new', saved);
   assert.deepEqual(result.cards.map(card => card.question), ['Changed\n\nparagraph', 'Two']);
   assert.deepEqual(result.cards.map(card => card.id), cards.map(card => card.id));
   assert.deepEqual(result.cards.map(card => card.line), parseCardRanges(saved, 'deck.md').slice(1).map(range => range.content.line));
+});
+
+test('projection rejects missing originals and invalid replacement parser cardinality as internal errors', () => {
+  const deck = snapshot();
+  for (const operation of [
+    { action: 'remove', source: 'deck.md' },
+    { action: 'remove', source: 'deck.md', original: { question: 'Missing', answer: 'Answer' } },
+  ] satisfies CardOperation[]) {
+    assert.throws(() => projectOperation(deck, operation, 'saved'),
+      error => error instanceof Error && !(error instanceof DeckRequestError) && /original/.test(error.message));
+  }
+  for (const count of [0, 2]) {
+    const project = createOperationProjector(() => deck.cards.slice(0, count));
+    for (const action of ['add', 'edit'] as const) {
+      const operation: CardOperation = { action, source: 'deck.md', original: pair, replacement: { question: 'Changed', answer: 'New' } };
+      assert.throws(() => project(deck, operation, 'saved'),
+        error => error instanceof Error && !(error instanceof DeckRequestError) && /contract violated: expected one/.test(error.message));
+    }
+  }
+});
+
+test('saved positions retain unmatched snapshot cards and assign duplicate occurrences in order', () => {
+  const deck = snapshot();
+  const operation: CardOperation = { action: 'add', source: 'deck.md', replacement: pair };
+  const saved = entry('External') + entry('Same') + entry('Same') + entry('Same');
+  const result = projectOperation(deck, operation, 'saved', saved);
+  const source = result.cards.filter(card => card.source === 'deck.md');
+  const positions = parseCardRanges(saved, 'deck.md').slice(1).map(range => range.content.line);
+  assert.deepEqual(source.map(card => card.question), ['Same', 'Other', 'Same', 'Same']);
+  assert.deepEqual(source.map(card => card.line), [positions[0], deck.cards[1].line, positions[1], positions[2]]);
+  assert.deepEqual(source.slice(0, 3).map(card => card.id), deck.cards.slice(0, 3).map(card => card.id));
+  assert.equal(source[1], deck.cards[1]);
 });

@@ -21,7 +21,7 @@ function fixture() {
   const copy = (item: GraphItem) => structuredClone(item);
   function requireNode(id: string) {
     const node = nodes.get(id);
-    if (!node) throw new GraphError('Missing item', 404, 'itemNotFound');
+    if (!node) throw new GraphError('Missing item', { status: 404, code: 'itemNotFound' });
     return node;
   }
   function child(parent: string, name: string) {
@@ -40,14 +40,14 @@ function fixture() {
     children: async id => [...nodes.values()].filter(node => node.parent === id).map(node => copy(node.item)),
     findChild: async (id, name) => { const found = child(id, name); return found ? copy(found.item) : null; },
     createFolder: async (parent, name) => {
-      if (child(parent, name)) throw new GraphError('Name collision', 409, 'nameAlreadyExists');
+      if (child(parent, name)) throw new GraphError('Name collision', { status: 409, code: 'nameAlreadyExists' });
       return put(parent, name, '', true);
     },
     readText: async id => { const node = requireNode(id); return { id, text: node.text, revision: node.item.eTag! }; },
     createFile: async (parent, name, text) => {
       const write: Write = { kind: 'create', id: '', parent, name, text };
       await hooks.before?.(write);
-      if (child(parent, name)) throw new GraphError('Name collision', 409, 'nameAlreadyExists');
+      if (child(parent, name)) throw new GraphError('Name collision', { status: 409, code: 'nameAlreadyExists' });
       const saved = put(parent, name, text);
       write.id = saved.id;
       committed.push({ ...write });
@@ -59,7 +59,7 @@ function fixture() {
       const write: Write = { kind: 'replace', id, parent: current.parent, name: current.item.name, text, revision };
       await hooks.before?.(write);
       const latest = requireNode(id);
-      if (latest.item.eTag !== revision) throw new GraphError('Revision changed', 412, 'preconditionFailed');
+      if (latest.item.eTag !== revision) throw new GraphError('Revision changed', { status: 412, code: 'preconditionFailed' });
       const saved = put(latest.parent, latest.item.name, text);
       committed.push({ ...write });
       await hooks.after?.(write);
@@ -178,7 +178,7 @@ test('definite source failure after archival retains recovery intent and safely 
   f.put('root', 'deck.md', entry('Remove') + entry('Keep'));
   const store = f.store();
   const deck = await store.load();
-  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Permission temporarily denied', 403, 'accessDenied'); };
+  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Permission temporarily denied', { status: 403, code: 'accessDenied' }); };
   await assert.rejects(store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck), DeckRequestError);
   assert.equal(f.text('root', 'removed.md'), entry('Remove'));
   assert.equal(f.text('root', 'deck.md'), entry('Remove') + entry('Keep'));
@@ -197,7 +197,7 @@ test('unknown source write that actually committed cannot append again during re
   f.put('root', 'deck.md', entry('Original'));
   const store = f.store();
   const deck = await store.load();
-  f.hooks.after = write => { if (write.name === 'deck.md') throw new GraphError('Save outcome unknown', 0, 'networkError', true); };
+  f.hooks.after = write => { if (write.name === 'deck.md') throw new GraphError('Save outcome unknown', { status: 0, code: 'networkError' }, true); };
   await assert.rejects(store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'Mine', answer: 'Answer' }, deck), /unknown/);
   assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Mine'));
   f.hooks.after = undefined;
@@ -215,7 +215,7 @@ test('interrupted add with no source write recovers the exact prepared bytes and
   f.put('root', 'deck.md', entry('Original'));
   const store = f.store();
   const deck = await store.load();
-  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Request aborted before sending', 0, 'networkError', true); };
+  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Request aborted before sending', { status: 0, code: 'networkError' }, true); };
   await assert.rejects(store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'Mine', answer: 'Answer' }, deck));
   const pending = await store.pending();
   assert.equal(pending?.sourceWrite.revision, deck.revisions['deck.md']);

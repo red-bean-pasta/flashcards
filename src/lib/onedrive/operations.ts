@@ -47,36 +47,39 @@ export function planContent(text: string, operation: CardOperation): ContentChan
   return { text: next, removed: operation.action === 'remove' ? matches.map(range => text.slice(range.start, range.end)).join('') : '', matched: matches.length };
 }
 
-/** Apply only this operation to the practice snapshot; external edits wait for refresh. */
-export function projectOperation(
-  deck: DeckState, operation: CardOperation, revision: string,
-  parse: typeof parseBrowserCards = parseBrowserCards,
-  savedText?: string,
-): DeckState {
-  const previous = deck.cards.filter(card => card.source === operation.source);
-  let cards: Card[];
-  if (operation.action === 'add') {
-    const created = parse(formatEntry(operation.replacement.question, operation.replacement.answer, '\n'), operation.source);
-    if (created.length !== 1) throw new Error('Add planning contract violated: expected one new card.');
-    cards = [...previous, created[0]];
-  } else {
-    if (!operation.original) throw new Error('Edit/remove projection requires its original pair.');
-    const matching = previous.filter(card => samePair(card, operation.original!));
-    if (!matching.length) throw new Error('Mutation projection lost the original snapshot pair.');
-    let edited: Card | undefined;
-    if (operation.action === 'edit') {
-      const replacement = parse(formatEntry(operation.replacement.question, operation.replacement.answer, '\n'), operation.source);
-      if (replacement.length !== 1) throw new Error('Edit planning contract violated: expected one replacement card.');
-      [edited] = replacement;
-    }
-    cards = previous.flatMap(card => !samePair(card, operation.original!) ? [card]
-      : operation.action === 'remove' ? [] : [{ ...edited!, id: card.id, line: card.line }]);
+function parseReplacement(operation: Extract<CardOperation, { replacement: Pair }>, parse: typeof parseBrowserCards): Card {
+  const cards = parse(formatEntry(operation.replacement.question, operation.replacement.answer, '\n'), operation.source);
+  if (cards.length !== 1) {
+    const message = operation.action === 'add'
+      ? 'Add planning contract violated: expected one new card.'
+      : 'Edit planning contract violated: expected one replacement card.';
+    throw new Error(message);
   }
-  if (savedText !== undefined) cards = locateSnapshotCards(cards, savedText, operation.source);
-  return {
-    ...deck, cards: [...deck.cards.filter(card => card.source !== operation.source), ...cards],
-    files: [...new Set([...deck.files, operation.source])].sort(),
-    revisions: { ...deck.revisions, [operation.source]: revision },
+  return cards[0];
+}
+
+function projectSourceCards(previous: Card[], operation: CardOperation, parse: typeof parseBrowserCards): Card[] {
+  if (operation.action === 'add') return [...previous, parseReplacement(operation, parse)];
+  const original = operation.original;
+  if (!original) throw new Error('Edit/remove projection requires its original pair.');
+  if (!previous.some(card => samePair(card, original))) throw new Error('Mutation projection lost the original snapshot pair.');
+  if (operation.action === 'remove') return previous.filter(card => !samePair(card, original));
+  const replacement = parseReplacement(operation, parse);
+  return previous.map(card => samePair(card, original) ? { ...replacement, id: card.id, line: card.line } : card);
+}
+
+/** Configure rendering once for projections of this store's practice snapshot. */
+export function createOperationProjector(parse: typeof parseBrowserCards = parseBrowserCards) {
+  /** Apply only this operation; external edits wait for refresh. */
+  return function projectOperation(deck: DeckState, operation: CardOperation, revision: string, savedText?: string): DeckState {
+    const previous = deck.cards.filter(card => card.source === operation.source);
+    let cards = projectSourceCards(previous, operation, parse);
+    if (savedText !== undefined) cards = locateSnapshotCards(cards, savedText, operation.source);
+    return {
+      ...deck, cards: [...deck.cards.filter(card => card.source !== operation.source), ...cards],
+      files: [...new Set([...deck.files, operation.source])].sort(),
+      revisions: { ...deck.revisions, [operation.source]: revision },
+    };
   };
 }
 
