@@ -66,7 +66,7 @@ Thumbs.db
 [Dd]esktop.ini
 
 # Agent and local files
-.agents/
 AGENTS.md
 materials/
 materials
+.agentspace/

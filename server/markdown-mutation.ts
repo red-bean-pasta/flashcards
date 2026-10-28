@@ -1,25 +1,16 @@
-import { CardParseError, parseCardRanges } from './parser.js';
+import { parseCardRanges } from './parser.js';
 import { MutationError } from './mutation-contract.js';
 import type { MutationRequest } from '../src/lib/types.js';
+import { CardInputError, formatEntry, appendEntry } from '../src/lib/card-text.js';
+export { appendEntry } from '../src/lib/card-text.js';
 
 function cardMarkdown(question: string, answer: string, eol: string): string {
-  const normalize = (text: string) => text.trim().replace(/\r\n?|\n/g, eol);
-  const text = `# question${eol}${normalize(question)}${eol}${eol}# answer${eol}${normalize(answer)}${eol}${eol}`;
   try {
-    const entries = parseCardRanges(text, 'Card input');
-    if (entries.length !== 1 || entries[0].content.question !== question.trim().replace(/\r\n?/g, '\n') ||
-        entries[0].content.answer !== answer.trim().replace(/\r\n?/g, '\n')) {
-      throw new MutationError('Card content cannot contain card markers or standalone --- separators.');
-    }
+    return formatEntry(question, answer, eol);
   } catch (error) {
-    if (!(error instanceof CardParseError)) throw error;
+    if (!(error instanceof CardInputError)) throw error;
     throw new MutationError(error.message, 400, { cause: error });
   }
-  return text;
-}
-
-export function appendEntry(text: string, entry: string, eol: string): string {
-  return text + (text && !text.endsWith(eol + eol) ? (text.endsWith(eol) ? eol : eol + eol) : '') + entry;
 }
 
 export function buildChange(text: string, request: MutationRequest): { text: string; removed?: string } {

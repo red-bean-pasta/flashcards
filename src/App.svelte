@@ -2,11 +2,12 @@
   import { sizeActionButton } from './lib/size-action-button';
   import { onMount } from 'svelte';
   import CardDialog from './components/CardDialog.svelte';
-  import { applyMutation } from './lib/card-mutations';
+  import OneDriveConnection from './components/OneDriveConnection.svelte';
+  import { localBackend, type DeckBackend } from './lib/deck-backend';
   import Collection from './components/Collection.svelte';
   import Flashcard from './components/Flashcard.svelte';
   import Progress from './components/Progress.svelte';
-  import type { DeckState, MutationRequest, MutationResult } from './lib/types';
+  import type { DeckState, MutationRequest } from './lib/types';
   import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession, updateSession } from './lib/session';
   import { createDeckLoader } from './lib/deck-loader';
 
@@ -16,6 +17,8 @@
   let networkError = $state('');
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
+  let activeStorage = $state<'local' | 'onedrive'>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
+  let backend = $state<DeckBackend | undefined>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
   let loader: ReturnType<typeof createDeckLoader> | undefined;
   const { order, index, revealed } = $derived(session);
   const current = $derived(order[index]);
@@ -36,10 +39,36 @@
     deck = next;
   }
 
-  function applySavedCard(request: MutationRequest, result: MutationResult) {
-    const next = applyMutation(deck, request, result);
+  async function saveCard(request: MutationRequest) {
+    if (!backend) throw new Error('Saving requires a connected card source.');
+    const savingBackend = backend;
+    const next = await savingBackend.mutate(request, deck);
+    if (backend !== savingBackend) throw new Error('Card source changed during an active mutation.');
     session = updateSession(session, filterCards(next.cards, selectedSource));
     deck = next;
+  }
+
+  function mountLoader() {
+    loader?.close();
+    if (!backend) { loading = false; return; }
+    const currentBackend = backend;
+    loader = createDeckLoader({
+      onDeck: applyDeck,
+      onError: message => { networkError = message; },
+      onLoading: value => { loading = value; },
+    }, () => currentBackend.load());
+    loading = true;
+    void loader.refresh();
+  }
+
+  function switchBackend(next: DeckBackend | null) {
+    backend = next ?? (import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
+    activeStorage = next ? 'onedrive' : (import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
+    deck = { cards: [], files: [], errors: [], revisions: {} };
+    session = startSession([]);
+    selectedSource = '';
+    networkError = '';
+    mountLoader();
   }
 
   function refresh() {
@@ -57,19 +86,15 @@
   }
 
   onMount(() => {
-    loader = createDeckLoader({
-      onDeck: applyDeck,
-      onError: message => { networkError = message; },
-      onLoading: value => { loading = value; },
-    });
-    void loader.refresh();
-    return loader.close;
+    mountLoader();
+    return () => loader?.close();
   });
 </script>
 
 <svelte:window onkeydown={handleKey} />
 
 <div class="shell" class:has-progress={showProgress}>
+  <OneDriveConnection onBackend={switchBackend} active={activeStorage} canSwitch={!dialogAction} />
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
@@ -81,6 +106,8 @@
           </section>
         {:else if loading}
           <p class="section-label" role="status">Loading…</p>
+        {:else if !backend}
+          <section class="notice"><h1 class="section-label">Connect OneDrive</h1><p>Connect your notes above to start practicing.</p></section>
         {:else if current}
           {#key current.id}
             <Flashcard card={current} {revealed} hasPrevious={index > 0}
@@ -98,9 +125,10 @@
         <Collection files={deck.files} total={deck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
-          <button class="text-action" disabled={loading || blocked} onclick={() => { dialogAction = 'add'; }}>Add</button>
+          <button class="text-action" disabled={loading || blocked || !backend} onclick={() => { dialogAction = 'add'; }}>Add</button>
           <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
           <button class="text-action" disabled={loading || blocked || !current} onclick={() => { dialogAction = 'edit'; }}>Edit</button>
+          <button class="text-action" disabled={loading || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
         </nav>
       </footer>
     </div>
@@ -108,7 +136,7 @@
 
   {#if dialogAction}
     <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
-      onSaved={applySavedCard} onClose={() => { dialogAction = null; }} />
+      onSubmit={saveCard} allOccurrences={activeStorage === 'onedrive'} onClose={() => { dialogAction = null; }} />
   {/if}
 
   {#if showProgress}
