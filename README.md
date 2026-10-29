@@ -96,7 +96,7 @@ Press **Space** to reveal or advance, **←** to revisit, and **→** to advance
 
 ## OneDrive Personal and static hosting
 
-The browser can connect directly to OneDrive Personal, without a card server. It creates or reuses **My Flashcards** in your OneDrive root by default. **Choose folder** opens an existing folder instead; its Markdown subfolders are included. This ordinary folder is app-managed by convention, not Microsoft's permission-isolated App Folder. The selected folder is remembered for the browser session. Disconnect removes the app's session credentials; it does not delete your notes or revoke Microsoft's consent grant.
+The browser can connect directly to OneDrive Personal, without a card server. It creates or reuses **My Flashcards** in your OneDrive root by default. Click the current folder name to choose an existing folder using Microsoft’s OneDrive picker; its Markdown subfolders are included. The picker opens in a pop-up and may ask for a separate Microsoft sign-in the first time. Use the same account as the app, then click the folder name again after returning. This ordinary folder is app-managed by convention, not Microsoft's permission-isolated App Folder. The selected folder is remembered for the browser session. Disconnect removes the app's session credentials; it does not delete your notes or revoke Microsoft's consent grant.
 
 To enable the connection:
 

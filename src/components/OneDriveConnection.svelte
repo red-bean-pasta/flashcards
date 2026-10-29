@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import OneDriveFolderBrowser from './OneDriveFolderBrowser.svelte';
+  import { openOneDrivePicker } from '../lib/onedrive/picker';
   import { createOneDriveAuth, OneDriveAuthError, type OneDriveAuth } from '../lib/onedrive/auth';
   import { createGraphClient, GraphError, type GraphClient, type GraphItem } from '../lib/onedrive/graph';
   import { createFolderConnection, type ConnectedFolder, type FolderConnection } from '../lib/onedrive/connection';
@@ -21,8 +21,6 @@
   const folder = $derived(selected?.folder);
   const recovery = $derived(selected?.recovery);
   const recoveryError = $derived(selected?.recoveryError ?? '');
-  let browsing = $state(false);
-  let browserSession = $state(0);
   let busy = $state(false);
   let actionError = $state('');
   let recoveryOpen = $state(false);
@@ -48,7 +46,6 @@
     const changed = selected?.backend !== next.backend;
     selected = next;
     if (changed) {
-      browsing = false;
       recoveryOpen = false;
       onBackend(next.backend);
     }
@@ -59,10 +56,17 @@
     await requireConnection().select(folder);
   }
 
-  function openBrowser() {
-    // A new browsing session also retries a previously failed initial listing.
-    browserSession++;
-    browsing = true;
+  function openPicker() {
+    if (!auth || !graph) throw new Error('OneDrive client has not been connected.');
+    if (!auth.hasPickerAuthorization()) { void run(() => auth!.startPickerSignIn()); return; }
+    const picker = openOneDrivePicker(() => auth!.getPickerToken(), async folder => {
+      const item = await graph!.getItem(folder.id);
+      const driveId = item.parentReference?.driveId;
+      if (!driveId || driveId.toLowerCase() !== folder.driveId.toLowerCase()) throw new DeckRequestError('The picker and app must use the same OneDrive account. Reconnect and sign in with the same account.');
+      if (!item.folder) throw new DeckRequestError('The selected item is not a folder in the connected OneDrive.');
+      await selectFolder(item);
+    });
+    void run(() => picker);
   }
 
   async function connect() {
@@ -97,7 +101,7 @@
   <div class="storage-actions">
     {#if active === 'onedrive' && folder}
       <button class="text-action">OneDrive</button>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={openBrowser}>{folder.name}</button>
+      <button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>{folder.name}</button>
     {:else}
       {#if import.meta.env.VITE_DEFAULT_STORAGE !== 'onedrive'}<span>Local notes</span>{/if}
       <button class="text-action" disabled={busy || !canSwitch || !clientId} onclick={startConnection}>Connect OneDrive</button>
@@ -108,12 +112,7 @@
     {#if actionError}<p role="alert" class="save-error">{actionError}</p>{/if}
     {#if recoveryError}<p role="alert" class="save-error">{recoveryError}</p>{/if}
     {#if auth}<button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>{/if}
-    {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openBrowser}>Choose an existing folder</button>{/if}
-  {/if}
-  {#if browsing && graph}
-    {#key browserSession}
-      <OneDriveFolderBrowser {graph} disabled={busy || !canSwitch} {run} onSelect={selectFolder} onClose={() => { browsing = false; }} />
-    {/key}
+    {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>{/if}
   {/if}
   {#if recovery}
     <section class="pending-save" aria-label="Pending OneDrive save">

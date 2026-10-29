@@ -163,3 +163,27 @@ test('unavailable session storage is actionable and consumed-body contract error
   });
   assert.throws(() => auth.isConnected(), error => error instanceof OneDriveAuthError && error.code === 'storage' && error.cause === storageError);
 });
+
+test('picker uses its own interactive authorization and preserves the Graph session', async () => {
+  const s = setup();
+  await s.callback();
+  await s.auth.completeSignIn();
+  assert.equal(s.auth.hasPickerAuthorization(), false);
+  await s.auth.startPickerSignIn();
+  const params = new URL(s.navigate()).searchParams;
+  assert.equal(params.get('scope'), 'offline_access OneDrive.ReadWrite');
+  s.location.href = `https://cards.example/app?code=picker-code&state=${params.get('state')}`;
+  s.transport(async () => Response.json({ access_token: 'picker', refresh_token: 'picker-refresh', token_type: 'Bearer', expires_in: 3600 }));
+  await s.auth.completeSignIn();
+  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
+  assert.equal(await s.auth.getPickerToken(), 'picker');
+  assert.equal(await s.auth.getAccessToken(), 'access');
+  s.advance(3_600_000);
+  s.transport(async () => Response.json({ access_token: 'picker-new', token_type: 'Bearer', expires_in: 3600 }));
+  assert.equal(await s.auth.getPickerToken(), 'picker-new');
+  assert.equal(s.calls[2].body.get('refresh_token'), 'picker-refresh');
+  await s.callback();
+  await s.auth.completeSignIn();
+  assert.equal(s.auth.hasPickerAuthorization(), false, 'Graph reconnection invalidates picker authorization');
+  s.auth.disconnect();
+});
