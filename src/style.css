@@ -255,16 +255,29 @@ a { color: inherit; }
 
 .source-select { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .source-select label { white-space: nowrap; }
-.source-select select {
+.source-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #75806e;
+}
+.source-choice-label {
   min-width: 0;
   max-width: 210px;
-  padding: 5px 16px 5px 0;
-  color: #75806e;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  font-size: inherit;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-choice-arrow { flex: none; transform: translateY(-2px); }
+.source-choice:has(select:focus-visible) { outline: 2px solid #9ca98d; outline-offset: 5px; }
+.source-choice select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
   cursor: pointer;
 }
 .collection-count { white-space: nowrap; }
@@ -310,7 +323,7 @@ a { color: inherit; }
   .practice { padding: 86px 24px; }
   .answer { padding-top: 30px; }
   .collection-footer { right: 20px; left: 20px; bottom: max(18px, env(safe-area-inset-bottom)); max-width: calc(100% - 40px); }
-  .source-select select { max-width: 150px; }
+  .source-choice-label { max-width: 150px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
