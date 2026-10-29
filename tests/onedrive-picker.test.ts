@@ -2,67 +2,75 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openOneDrivePicker } from '../src/lib/onedrive/picker.ts';
 
-test('consumer picker handles an authentication command and selects a folder', async () => {
-  const originalWindow = globalThis.window;
-  const originalLocation = globalThis.location;
-  let listener!: (event: MessageEvent) => void;
-  let portListener!: (event: MessageEvent) => void;
-  let pickerUrl = '';
-  let selected = '';
+function setup() {
+  const original = { window: globalThis.window, document: globalThis.document, location: globalThis.location };
+  let initialize!: (event: MessageEvent) => void;
+  let command!: (event: MessageEvent) => void;
+  let form: any;
   const sent: any[] = [];
-  const port = { addEventListener: (_: string, fn: typeof portListener) => { portListener = fn; }, start() {}, close() {}, postMessage: (value: unknown) => sent.push(value) };
-  const popup = { closed: false, close() { this.closed = true; }, document: {
-    createElement: (tag: string) => tag === 'form' ? { method: '', action: '', append() {}, submit() { pickerUrl = this.action; } } : {},
-    body: { append() {} },
-  } };
-  const fakeWindow = { open: () => popup, setInterval, clearInterval, addEventListener: (_: string, fn: typeof listener) => { listener = fn; }, removeEventListener() {} };
-  Object.assign(globalThis, { window: fakeWindow, location: { origin: 'http://localhost:3000' } });
+  const source = {};
+  const frame = { name: '', contentWindow: source } as HTMLIFrameElement;
+  const port = { addEventListener: (_: string, fn: typeof command) => { command = fn; }, start() {}, close() {}, postMessage: (value: unknown) => sent.push(value) };
+  const fakeDocument = { createElement: (tag: string) => tag === 'form' ? (form = { append() {}, submit() {}, remove() {} }) : {}, body: { append() {} } };
+  const fakeWindow = { addEventListener: (_: string, fn: typeof initialize) => { initialize = fn; }, removeEventListener() {} };
+  Object.assign(globalThis, { window: fakeWindow, document: fakeDocument, location: { origin: 'http://localhost:3000' } });
+  return { frame, source, port, sent, getForm: () => form, initialize: (event: any) => initialize(event), command: (data: any) => command({ data } as MessageEvent), restore: () => Object.assign(globalThis, original) };
+}
+
+test('embedded consumer picker validates initialization and handles authentication and selection', async () => {
+  const env = setup();
   try {
-    const result = openOneDrivePicker(async () => 'personal-token', async folder => { selected = folder.id; });
+    let selected = '';
+    const result = openOneDrivePicker(env.frame, new AbortController().signal, async () => 'personal-token', async folder => { selected = folder.id; });
     await new Promise(resolve => setImmediate(resolve));
-    const url = new URL(pickerUrl);
+    const form = env.getForm();
+    const url = new URL(form.action);
     assert.equal(url.origin + url.pathname, 'https://onedrive.live.com/picker');
-    const options = JSON.parse(url.searchParams.get('filePicker')!);
-    listener({ origin: 'https://onedrive.live.com', source: popup, data: { type: 'initialize', channelId: options.messaging.channelId }, ports: [port] } as unknown as MessageEvent);
-    portListener({ data: { type: 'command', id: 'auth', data: { command: 'authenticate', type: 'OneDrive' } } } as MessageEvent);
+    assert.equal(form.method, 'POST');
+    assert.equal(form.target, env.frame.name);
+    const channelId = JSON.parse(url.searchParams.get('filePicker')!).messaging.channelId;
+    const event = { origin: 'https://onedrive.live.com', source: env.source, data: { type: 'initialize', channelId }, ports: [env.port] };
+    env.initialize({ ...event, origin: 'https://evil.example' });
+    env.initialize({ ...event, source: {} });
+    env.initialize({ ...event, data: { ...event.data, channelId: 'wrong' } });
+    assert.equal(env.sent.length, 0);
+    env.initialize(event);
+    env.command({ type: 'command', id: 'auth', data: { command: 'authenticate' } });
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(sent.at(-1), { type: 'result', id: 'auth', data: { result: 'token', token: 'personal-token' } });
-    portListener({ data: { type: 'command', id: 'pick', data: { command: 'pick', items: [{ id: 'folder-id', parentReference: { driveId: 'drive-id' } }] } } } as MessageEvent);
+    assert.deepEqual(env.sent.at(-1), { type: 'result', id: 'auth', data: { result: 'token', token: 'personal-token' } });
+    env.command({ type: 'command', id: 'pick', data: { command: 'pick', items: [{ id: 'folder-id', parentReference: { driveId: 'drive-id' } }] } });
     await result;
     assert.equal(selected, 'folder-id');
-  } finally {
-    Object.assign(globalThis, { window: originalWindow, location: originalLocation });
-  }
+  } finally { env.restore(); }
 });
 
-test('popup closing during selection waits for the selection failure', async () => {
-  const originalWindow = globalThis.window;
-  const originalLocation = globalThis.location;
-  let initialize!: (event: MessageEvent) => void;
-  let onCommand!: (event: MessageEvent) => void;
-  let poll!: () => void;
-  let pickerUrl = '';
-  let finishSelection!: (reason?: unknown) => void;
-  const port = { addEventListener: (_: string, fn: typeof onCommand) => { onCommand = fn; }, start() {}, close() {}, postMessage() {} };
-  const popup = { closed: false, close() { this.closed = true; }, document: {
-    createElement: (tag: string) => tag === 'form' ? { method: '', action: '', append() {}, submit() { pickerUrl = this.action; } } : {},
-    body: { append() {} },
-  } };
-  const fakeWindow = { open: () => popup, setInterval: (fn: typeof poll) => { poll = fn; return 1; }, clearInterval() {}, addEventListener: (_: string, fn: typeof initialize) => { initialize = fn; }, removeEventListener() {} };
-  Object.assign(globalThis, { window: fakeWindow, location: { origin: 'http://localhost:3000' } });
+test('cancellation waits for an in-flight selection and preserves its failure', async () => {
+  const env = setup();
   try {
-    const result = openOneDrivePicker(async () => 'token', () => new Promise<void>((_, reject) => { finishSelection = reject; }));
-    let settled = false;
-    void result.then(() => { settled = true; }, () => { settled = true; });
+    const controller = new AbortController();
+    let failSelection!: (error: Error) => void;
+    const result = openOneDrivePicker(env.frame, controller.signal, async () => 'token', () => new Promise<void>((_, reject) => { failSelection = reject; }));
     await new Promise(resolve => setImmediate(resolve));
-    const options = JSON.parse(new URL(pickerUrl).searchParams.get('filePicker')!);
-    initialize({ origin: 'https://onedrive.live.com', source: popup, data: { type: 'initialize', channelId: options.messaging.channelId }, ports: [port] } as unknown as MessageEvent);
-    onCommand({ data: { type: 'command', id: 'pick', data: { command: 'pick', items: [{ id: 'folder', parentReference: { driveId: 'drive' } }] } } } as MessageEvent);
-    popup.closed = true;
-    poll();
+    const channelId = JSON.parse(new URL(env.getForm().action).searchParams.get('filePicker')!).messaging.channelId;
+    env.initialize({ origin: 'https://onedrive.live.com', source: env.source, data: { type: 'initialize', channelId }, ports: [env.port] });
+    env.command({ type: 'command', id: 'pick', data: { command: 'pick', items: [{ id: 'folder', parentReference: { driveId: 'drive' } }] } });
+    controller.abort();
+    const failure = new Error('selection failed');
+    failSelection(failure);
+    await assert.rejects(result, failure);
+  } finally { env.restore(); }
+});
+
+test('cancellation before token acquisition prevents submission', async () => {
+  const env = setup();
+  try {
+    const controller = new AbortController();
+    let supply!: (token: string) => void;
+    const result = openOneDrivePicker(env.frame, controller.signal, () => new Promise(resolve => { supply = resolve; }), async () => {});
+    controller.abort();
+    supply('token');
+    await result;
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(settled, false);
-    finishSelection(undefined);
-    await assert.rejects(result, error => error === undefined);
-  } finally { Object.assign(globalThis, { window: originalWindow, location: originalLocation }); }
+    assert.equal(env.getForm(), undefined);
+  } finally { env.restore(); }
 });

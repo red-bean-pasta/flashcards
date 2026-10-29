@@ -44,10 +44,16 @@ button:focus-visible, a:focus-visible, select:focus-visible {
 a { color: inherit; }
 
 .shell {
+  position: relative;
   height: 100dvh;
+  margin-left: 0;
+  transition: margin-left 300ms ease;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
+@media (min-aspect-ratio: 5/6) { .shell.picker-open { margin-left: clamp(40vh, var(--picker-width), 75vw); } }
+.shell.picker-resizing { transition: none; }
+@media (prefers-reduced-motion: reduce) { .shell { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
 .practice-scroll { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
 .practice-page { position: relative; min-height: 100%; display: grid; }

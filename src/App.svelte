@@ -18,6 +18,14 @@
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
   let storageBusy = $state(false);
+  let pickerOpen = $state(false);
+  let pickerWidth = $state(100 / 3);
+  let pickerResizing = $state(false);
+
+  function updatePickerWidth(width: number) {
+    pickerWidth = width;
+    localStorage.setItem('onedrive-picker-width', String(width));
+  }
   let activeStorage = $state<'local' | 'onedrive'>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
   let backend = $state<DeckBackend | undefined>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
   let loader: ReturnType<typeof createDeckLoader> | undefined;
@@ -88,6 +96,8 @@
   }
 
   onMount(() => {
+    const savedWidth = Number(localStorage.getItem('onedrive-picker-width'));
+    if (savedWidth >= 1 && savedWidth <= 75) pickerWidth = savedWidth;
     mountLoader();
     return () => loader?.close();
   });
@@ -95,8 +105,8 @@
 
 <svelte:window onkeydown={handleKey} />
 
-<div class="shell" class:has-progress={showProgress}>
-  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction} />
+<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing} style:--picker-width={pickerWidth + 'vw'}>
+  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} onPickerChange={value => { pickerOpen = value; }} {pickerWidth} onPickerWidth={updatePickerWidth} onPickerResizing={value => { pickerResizing = value; }} active={activeStorage} canSwitch={!dialogAction} />
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { openOneDrivePicker } from '../lib/onedrive/picker';
   import { createOneDriveAuth, OneDriveAuthError, type OneDriveAuth } from '../lib/onedrive/auth';
   import { createGraphClient, GraphError, type GraphClient, type GraphItem } from '../lib/onedrive/graph';
@@ -8,8 +8,9 @@
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
 
-  let { onBackend, onBusy, active = 'local', canSwitch = true }: {
-    onBackend: (backend: DeckBackend | null) => void; onBusy: (busy: boolean) => void;
+  let { onBackend, onBusy, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
+    onBackend: (backend: DeckBackend | null) => void; onBusy: (busy: boolean) => void; onPickerChange: (open: boolean) => void;
+    pickerWidth: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
     active?: 'local' | 'onedrive'; canSwitch?: boolean;
   } = $props();
   const clientId = import.meta.env.VITE_ONEDRIVE_CLIENT_ID as string | undefined;
@@ -24,6 +25,10 @@
   let busy = $state(false);
   let actionError = $state('');
   let recoveryOpen = $state(false);
+  let pickerOpen = $state(false);
+  let pickerFrame = $state<HTMLIFrameElement>();
+  let pickerAbort: AbortController | undefined;
+  let pickerTrigger: HTMLElement | null = null;
 
   async function run(operation: () => Promise<void>) {
     if (busy) return;
@@ -56,16 +61,53 @@
     await requireConnection().select(folder);
   }
 
+  function resizePicker(clientX: number) {
+    const minimum = window.innerHeight * 0.4 / window.innerWidth * 100;
+    onPickerWidth(Math.min(75, Math.max(minimum, clientX / window.innerWidth * 100)));
+  }
+
+  function startResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    onPickerResizing(true);
+    resizePicker(event.clientX);
+  }
+
+  function moveResize(event: PointerEvent) {
+    if ((event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) resizePicker(event.clientX);
+  }
+
+  function resizeWithKeyboard(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    resizePicker((pickerWidth + (event.key === 'ArrowRight' ? 2 : -2)) / 100 * window.innerWidth);
+  }
+
+  function closePicker() { pickerAbort?.abort(); }
+
   function openPicker() {
     if (!auth || !graph) throw new Error('OneDrive client has not been connected.');
-    const picker = openOneDrivePicker(() => auth!.getPickerToken(), async folder => {
-      const item = await graph!.getItem(folder.id);
-      const driveId = item.parentReference?.driveId;
-      if (!driveId || driveId.toLowerCase() !== folder.driveId.toLowerCase()) throw new DeckRequestError('The picker and app must use the same OneDrive account. Reconnect and sign in with the same account.');
-      if (!item.folder) throw new DeckRequestError('The selected item is not a folder in the connected OneDrive.');
-      await selectFolder(item);
-    });
-    void run(() => picker);
+    pickerTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    pickerAbort = new AbortController();
+    pickerOpen = true;
+    onPickerChange(true);
+    void run(async () => {
+      try {
+        await tick();
+        await openOneDrivePicker(pickerFrame!, pickerAbort!.signal, () => auth!.getPickerToken(), async folder => {
+          const item = await graph!.getItem(folder.id);
+          const driveId = item.parentReference?.driveId;
+          if (!driveId || driveId.toLowerCase() !== folder.driveId.toLowerCase()) throw new DeckRequestError('The picker and app must use the same OneDrive account. Reconnect and sign in with the same account.');
+          if (!item.folder) throw new DeckRequestError('The selected item is not a folder in the connected OneDrive.');
+          await selectFolder(item);
+        });
+      } finally {
+        pickerOpen = false;
+        onPickerChange(false);
+        pickerAbort = undefined;
+      }
+    }).then(async () => { await tick(); pickerTrigger?.focus(); });
   }
 
   async function connect() {
@@ -135,4 +177,23 @@
   .storage-hint { margin: .35rem 0; opacity: .7; }
   .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
+
+  .picker-pane { position: fixed; z-index: 10; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); box-shadow: 2px 0 18px #0002; animation: picker-enter 300ms ease both; }
+  .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
+  .picker-pane iframe { border: 0; width: 100%; flex: 1; min-height: 0; }
+  .picker-resize { position: absolute; z-index: 1; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+  .picker-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
+  @media (aspect-ratio < 5/6) { .picker-pane { width: min(100vw, 40vh); } .picker-resize { display: none; } }
+  @keyframes picker-enter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+  @media (prefers-reduced-motion: reduce) { .picker-pane { animation: none; } }
 </style>
+
+<svelte:window onkeydown={event => { if (pickerOpen && event.key === 'Escape') closePicker(); }} />
+{#if pickerOpen}
+  <aside class="picker-pane" aria-label="Choose a OneDrive folder">
+    <div class="picker-header"><span>Choose a folder</span><button class="text-action" onclick={closePicker} aria-label="Close folder picker">Close</button></div>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: A focusable separator is the accessible window-splitter pattern. -->
+    <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(pickerWidth)} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
+    <iframe bind:this={pickerFrame} title="OneDrive folder picker"></iframe>
+  </aside>
+{/if}

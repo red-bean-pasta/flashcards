@@ -13,14 +13,15 @@ function pickerOptions(channelId: string) {
   };
 }
 
-function submitPicker(popup: Window, channelId: string, token: string) {
+function submitPicker(frame: HTMLIFrameElement, channelId: string, token: string) {
   const url = new URL('/picker', PICKER_ORIGIN);
   url.searchParams.set('filePicker', JSON.stringify(pickerOptions(channelId)));
-  const form = popup.document.createElement('form');
-  form.method = 'POST'; form.action = url.href;
-  const input = popup.document.createElement('input');
+  const form = document.createElement('form');
+  form.method = 'POST'; form.action = url.href; form.target = frame.name;
+  const input = document.createElement('input');
   input.type = 'hidden'; input.name = 'access_token'; input.value = token;
-  form.append(input); popup.document.body.append(form); form.submit();
+  form.append(input); document.body.append(form);
+  try { form.submit(); } finally { form.remove(); }
 }
 
 function selectedFolder(items: unknown): PickedFolder {
@@ -31,27 +32,21 @@ function selectedFolder(items: unknown): PickedFolder {
   return { id: items[0].id, driveId: items[0].parentReference.driveId };
 }
 
-/** Open Microsoft's hosted OneDrive Personal folder picker on a user gesture. */
-export function openOneDrivePicker(getToken: () => Promise<string>, select: (folder: PickedFolder) => Promise<void>): Promise<void> {
-  const popup = window.open('', '_blank', 'width=1080,height=680');
-  if (!popup) return Promise.reject(new DeckRequestError('Allow pop-ups to choose a OneDrive folder.'));
-  return runPicker(popup, getToken, select);
-}
-
-function runPicker(popup: Window, getToken: () => Promise<string>, select: (folder: PickedFolder) => Promise<void>): Promise<void> {
+/** Run the hosted picker in the supplied frame until selection or cancellation. */
+export function openOneDrivePicker(frame: HTMLIFrameElement, signal: AbortSignal, getToken: () => Promise<string>, select: (folder: PickedFolder) => Promise<void>): Promise<void> {
   const channelId = crypto.randomUUID();
+  frame.name = `onedrive-picker-${channelId}`;
   return new Promise((resolve, reject) => {
     let port: MessagePort | undefined;
     let finished = false;
     let selecting = false;
-    const timer = window.setInterval(() => { if (popup.closed && !selecting) succeed(); }, 500);
-
+    function cancel() { if (!selecting) succeed(); }
     function cleanup() {
       finished = true;
-      window.clearInterval(timer);
+      signal.removeEventListener('abort', cancel);
       window.removeEventListener('message', initialize);
       port?.close();
-      if (!popup.closed) popup.close();
+
     }
     function succeed() { if (!finished) { cleanup(); resolve(); } }
     function fail(error: unknown) { if (!finished) { cleanup(); reject(error); } }
@@ -83,7 +78,7 @@ function runPicker(popup: Window, getToken: () => Promise<string>, select: (fold
       }
     }
     function initialize(event: MessageEvent) {
-      if (event.origin !== PICKER_ORIGIN || event.source !== popup || event.data?.type !== 'initialize' || event.data.channelId !== channelId || !event.ports[0]) return;
+      if (event.origin !== PICKER_ORIGIN || event.source !== frame.contentWindow || event.data?.type !== 'initialize' || event.data.channelId !== channelId || !event.ports[0]) return;
       port?.close();
       port = event.ports[0];
       port.addEventListener('message', event => { void command(event); });
@@ -91,6 +86,8 @@ function runPicker(popup: Window, getToken: () => Promise<string>, select: (fold
       port.postMessage({ type: 'activate' });
     }
     window.addEventListener('message', initialize);
-    void getToken().then(token => { if (!finished && !popup.closed) submitPicker(popup, channelId, token); }).catch(fail);
+    signal.addEventListener('abort', cancel);
+    if (signal.aborted) cancel();
+    void getToken().then(token => { if (!finished) submitPicker(frame, channelId, token); }).catch(fail);
   });
 }
