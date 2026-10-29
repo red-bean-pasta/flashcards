@@ -2,6 +2,7 @@
 const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
 const SCOPES = 'offline_access https://graph.microsoft.com/Files.ReadWrite';
 const PICKER_SCOPES = 'offline_access OneDrive.ReadWrite';
+const CONNECTION_SCOPES = `${SCOPES} OneDrive.ReadWrite`;
 const PENDING_LIFETIME_MS = 10 * 60 * 1000;
 
 export type OneDriveAuthErrorCode = 'configuration' | 'reconnect_required' | 'oauth' | 'network' | 'invalid_response' | 'storage';
@@ -113,7 +114,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     saveStored('pending', { state, verifier, createdAt: now(), ...(purpose ? { purpose } : {}) });
     const url = new URL(`${AUTHORITY}/authorize`);
     url.search = new URLSearchParams({ client_id: config.clientId, response_type: 'code', redirect_uri: redirect.href,
-      response_mode: 'query', scope: purpose === 'picker' ? PICKER_SCOPES : SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account' }).toString();
+      response_mode: 'query', scope: purpose === 'picker' ? PICKER_SCOPES : CONNECTION_SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account' }).toString();
     location.assign(url.href);
   }
   async function fetchToken(parameters: Record<string, string>, oldRefreshToken?: string, scope = SCOPES): Promise<Tokens> {
@@ -217,10 +218,11 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
   function hasPickerAuthorization(): boolean { return readStored('pickerTokens', isTokens) !== undefined; }
   function getPickerToken(): Promise<string> {
     return enqueueTokenRequest(async () => {
-      const tokens = readStored('pickerTokens', isTokens);
-      if (!tokens) throw new OneDriveAuthError('Authorize the OneDrive folder picker first.', 'reconnect_required');
-      if (tokens.expiresAt > now() + 60_000) return tokens.accessToken;
-      if (!tokens.refreshToken) { removeStored('pickerTokens'); throw new OneDriveAuthError('Authorize the OneDrive folder picker again.', 'reconnect_required'); }
+      const pickerTokens = readStored('pickerTokens', isTokens);
+      const tokens = pickerTokens ?? readStored('tokens', isTokens);
+      if (!tokens) throw new OneDriveAuthError('Connect OneDrive to choose a folder.', 'reconnect_required');
+      if (pickerTokens && pickerTokens.expiresAt > now() + 60_000) return pickerTokens.accessToken;
+      if (!tokens.refreshToken) { removeStored('pickerTokens'); throw new OneDriveAuthError('Reconnect OneDrive to choose a folder.', 'reconnect_required'); }
       const expected = generation;
       let replacement: Tokens;
       try { replacement = await fetchToken({ grant_type: 'refresh_token', refresh_token: tokens.refreshToken }, tokens.refreshToken, PICKER_SCOPES); }

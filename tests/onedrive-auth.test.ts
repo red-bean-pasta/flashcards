@@ -32,7 +32,7 @@ test('personal-account sign-in uses S256 PKCE, state, delegated scopes and sessi
   assert.equal(new URL(s.navigate()).pathname, '/consumers/oauth2/v2.0/authorize');
   assert.equal(params.get('code_challenge_method'), 'S256');
   assert.equal(params.get('response_type'), 'code');
-  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite');
+  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite OneDrive.ReadWrite');
   assert.equal(await s.auth.completeSignIn(), true);
   assert.equal(s.location.href, 'https://cards.example/app');
   const body = s.calls[0].body;
@@ -186,4 +186,18 @@ test('picker uses its own interactive authorization and preserves the Graph sess
   await s.auth.completeSignIn();
   assert.equal(s.auth.hasPickerAuthorization(), false, 'Graph reconnection invalidates picker authorization');
   s.auth.disconnect();
+});
+
+
+test('picker obtains its token from the connected session without another redirect', async () => {
+  const s = setup();
+  await s.callback();
+  await s.auth.completeSignIn();
+  s.transport(async () => Response.json({ access_token: 'picker', refresh_token: 'picker-refresh', token_type: 'Bearer', expires_in: 3600 }));
+  assert.equal(await s.auth.getPickerToken(), 'picker');
+  assert.equal(s.calls[1].body.get('grant_type'), 'refresh_token');
+  assert.equal(s.calls[1].body.get('refresh_token'), 'refresh');
+  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
+  assert.equal(await s.auth.getPickerToken(), 'picker');
+  assert.equal(s.calls.length, 2);
 });

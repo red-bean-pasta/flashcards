@@ -58,7 +58,6 @@
 
   function openPicker() {
     if (!auth || !graph) throw new Error('OneDrive client has not been connected.');
-    if (!auth.hasPickerAuthorization()) { void run(() => auth!.startPickerSignIn()); return; }
     const picker = openOneDrivePicker(() => auth!.getPickerToken(), async folder => {
       const item = await graph!.getItem(folder.id);
       const driveId = item.parentReference?.driveId;
