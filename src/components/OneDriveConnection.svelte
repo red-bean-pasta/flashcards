@@ -73,10 +73,8 @@
     await connection.restore();
   }
 
-  function disconnect() {
-    auth?.disconnect(); graph = undefined; connection = undefined; selected = null;
-    browsing = false; actionError = ''; recoveryOpen = false;
-    onBackend(null);
+  export function startConnection() {
+    void run(connect);
   }
 
   async function clearReviewed() {
@@ -98,13 +96,11 @@
 <aside class="storage-connection" aria-label="Card storage">
   <div class="storage-actions">
     {#if active === 'onedrive' && folder}
-      <span>OneDrive · {folder.name}</span>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={openBrowser}>Choose folder</button>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => requireConnection().useDefault())}>My Flashcards</button>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={disconnect}>Disconnect</button>
+      <button class="text-action">OneDrive</button>
+      <button class="text-action" disabled={busy || !canSwitch} onclick={openBrowser}>{folder.name}</button>
     {:else}
-      <span>{import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'Connect your notes' : 'Local notes'}</span>
-      <button class="text-action" disabled={busy || !canSwitch || !clientId} onclick={() => run(connect)}>Connect OneDrive</button>
+      {#if import.meta.env.VITE_DEFAULT_STORAGE !== 'onedrive'}<span>Local notes</span>{/if}
+      <button class="text-action" disabled={busy || !canSwitch || !clientId} onclick={startConnection}>Connect OneDrive</button>
     {/if}
   </div>
   {#if !clientId}<p class="storage-hint">OneDrive isn’t configured for this site.</p>{/if}

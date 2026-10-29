@@ -21,6 +21,7 @@
   let activeStorage = $state<'local' | 'onedrive'>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
   let backend = $state<DeckBackend | undefined>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
   let loader: ReturnType<typeof createDeckLoader> | undefined;
+  let oneDriveConnection: ReturnType<typeof OneDriveConnection>;
   const { order, index, revealed } = $derived(session);
   const current = $derived(order[index]);
   const blocked = $derived(deck.errors.length > 0 || !!networkError);
@@ -95,7 +96,7 @@
 <svelte:window onkeydown={handleKey} />
 
 <div class="shell" class:has-progress={showProgress}>
-  <OneDriveConnection onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction && !loading} />
+  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction && !loading} />
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
@@ -108,16 +109,15 @@
         {:else if loading}
           <p class="section-label" role="status">Loading…</p>
         {:else if !backend}
-          <section class="notice"><h1 class="section-label">Connect OneDrive</h1><p>Connect your notes above to start practicing.</p></section>
+          <section class="empty-prompt"><p><button disabled={storageBusy || !import.meta.env.VITE_ONEDRIVE_CLIENT_ID} onclick={() => oneDriveConnection.startConnection()}>Connect your cloud storage</button> to start practicing your notes.</p></section>
         {:else if current}
           {#key current.id}
             <Flashcard card={current} {revealed} hasPrevious={index > 0}
               onAction={performAction} onHide={hideCurrentAnswer} onPrevious={showPrevious} />
           {/key}
         {:else}
-          <section class="notice">
-            <h1 class="section-label">No cards yet</h1>
-            <p>Add <code># question</code> and <code># answer</code> sections to your Markdown notes.</p>
+          <section class="empty-prompt">
+            <p>No cards yet.<br />Add question-and-answer pairs to your Markdown notes to start practicing :)</p>
           </section>
         {/if}
       </main>
