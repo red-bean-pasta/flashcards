@@ -52,20 +52,24 @@ a { color: inherit; }
 
 .shell {
   position: relative;
+  z-index: 0;
   height: 100dvh;
   margin-left: 0;
   transition: margin-left 300ms ease, margin-right 300ms ease;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
+.shell::before { content: ''; position: absolute; z-index: 1; inset: 0; background: var(--dialog-color); pointer-events: none; transition: box-shadow 300ms ease; }
+.shell.picker-open::before { box-shadow: -2px 0 18px #0003; }
+.practice-scroll, .shell > .remaining-line { position: relative; z-index: 2; }
 .shell { --picker-visible-width: min(100vw, 40vh); }
+.shell.picker-open { margin-left: var(--picker-visible-width); }
 @media (min-aspect-ratio: 5/6) {
   .shell { --picker-visible-width: clamp(40vh, var(--picker-width), 75vw); }
-  .shell.picker-open { margin-left: var(--picker-visible-width); }
   .shell.card-panel-open { margin-right: var(--add-panel-width); }
 }
 .shell.picker-resizing { transition: none; }
-@media (prefers-reduced-motion: reduce) { .shell { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .shell, .shell::before { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
 .practice-scroll { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
 .practice-page { position: relative; min-height: 100%; display: grid; }

@@ -286,19 +286,17 @@
   .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
 
-  .picker-pane { position: fixed; z-index: 10; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); animation: picker-enter 300ms ease both; }
-  .picker-pane::after { content: ''; position: absolute; z-index: 2; inset: 0; box-shadow: inset -12px 0 18px -14px rgb(0 0 0 / .25); pointer-events: none; }
-  .picker-hidden { visibility: hidden; pointer-events: none; animation: none; }
+  .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
+  .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }
   .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
   .picker-header-actions { display: flex; gap: 1rem; }
   .picker-frames { position: relative; flex: 1; min-height: 0; }
   .picker-pane iframe { position: absolute; inset: 0; border: 0; width: 100%; height: 100%; }
   .picker-pane iframe.pending { opacity: 0; pointer-events: none; }
-  .picker-resize { position: absolute; z-index: 1; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+  .picker-resize { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
   .picker-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
   @media (aspect-ratio < 5/6) { .picker-pane { width: min(100vw, 40vh); } .picker-resize { display: none; } }
-  @keyframes picker-enter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
-  @media (prefers-reduced-motion: reduce) { .picker-pane { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .picker-pane { transition: none; } }
 </style>
 
 <svelte:window onkeydown={event => { if (pickerOpen && event.key === 'Escape') closePicker(); }} />
