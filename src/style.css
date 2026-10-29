@@ -59,8 +59,8 @@ a { color: inherit; }
 @media (min-aspect-ratio: 5/6) {
   .shell { --picker-visible-width: clamp(40vh, var(--picker-width), 75vw); }
   .shell.picker-open { margin-left: var(--picker-visible-width); }
+  .shell.card-panel-open { margin-right: var(--add-panel-width); }
 }
-.shell.add-push { margin-right: var(--add-panel-width); }
 .shell.picker-resizing { transition: none; }
 @media (prefers-reduced-motion: reduce) { .shell { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }

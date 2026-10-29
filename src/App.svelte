@@ -29,7 +29,7 @@
   const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
     ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
     : Math.min(viewportWidth, viewportHeight * .4)));
-  const addPushes = $derived((dialogAction === 'add' || dialogAction === 'edit') && addPanelPixels < viewportWidth * .4);
+  const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit');
 
   function openCardPanel(action: 'add' | 'edit') {
     restorePicker = pickerOpen && window.matchMedia('(min-aspect-ratio: 5/6)').matches;
@@ -140,7 +140,7 @@
 
 <svelte:window onkeydown={handleKey} onresize={updateViewport} />
 
-<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:add-push={addPushes} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
+<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
   <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} onPickerChange={value => { pickerOpen = value; }} {pickerWidth} onPickerWidth={updatePickerWidth} onPickerResizing={value => { pickerResizing = value; }} active={activeStorage} canSwitch={!dialogAction} />
   <div class="practice-scroll">
     <div class="practice-page">
