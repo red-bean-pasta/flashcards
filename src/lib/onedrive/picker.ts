@@ -33,7 +33,7 @@ function selectedFolder(items: unknown): PickedFolder {
 }
 
 /** Keep one hosted picker and its messaging channel alive until disposed. */
-export function createOneDrivePicker(frame: HTMLIFrameElement, getToken: () => Promise<string>, select: (folder: PickedFolder) => Promise<void>, onClose: () => void, onError: (error: unknown) => void) {
+export function createOneDrivePicker(frame: HTMLIFrameElement, getToken: () => Promise<string>, select: (folder: PickedFolder) => Promise<void>, onClose: () => void, onError: (error: unknown) => void, onSelected: () => void, onReady: () => void) {
   const channelId = crypto.randomUUID();
   frame.name = `onedrive-picker-${channelId}`;
   let port: MessagePort | undefined;
@@ -57,7 +57,7 @@ export function createOneDrivePicker(frame: HTMLIFrameElement, getToken: () => P
       await select(selectedFolder(items));
       reply(activePort, id, { result: 'success' });
     } finally { selecting = false; }
-    onClose();
+    onSelected();
   }
   async function command(event: MessageEvent) {
     const message = event.data;
@@ -83,6 +83,7 @@ export function createOneDrivePicker(frame: HTMLIFrameElement, getToken: () => P
     port.addEventListener('message', event => { void command(event); });
     port.start();
     port.postMessage({ type: 'activate' });
+    onReady();
   }
   window.addEventListener('message', initialize);
   void getToken().then(token => { if (!disposed) submitPicker(frame, channelId, token); }).catch(fail);

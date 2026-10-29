@@ -26,13 +26,18 @@
   let actionError = $state('');
   let recoveryOpen = $state(false);
   let pickerOpen = $state(false);
-  let pickerFrame = $state<HTMLIFrameElement>();
+  type PickerSlot = { id: number; frame?: HTMLIFrameElement };
+  let pickerSlots = $state<PickerSlot[]>([]);
+  let activePickerId = $state<number | null>(null);
   let pickerMounted = $state(false);
-  let picker: ReturnType<typeof createOneDrivePicker> | undefined;
+  let pickerStarting = $state(false);
   let pickerTrigger: HTMLElement | null = null;
-  let pickerGeneration = $state(0);
-  let pickerStarting = false;
   let pickerTimer: ReturnType<typeof setTimeout> | undefined;
+  let readyTimer: ReturnType<typeof setTimeout> | undefined;
+  let nextPickerId = 0;
+  let candidateId: number | undefined;
+  let candidateReady = false;
+  const pickers = new Map<number, ReturnType<typeof createOneDrivePicker>>();
   let destroyed = false;
   const pickerRefreshInterval = 3 * 60 * 1000;
 
@@ -41,29 +46,76 @@
     pickerTimer = undefined;
   }
 
+  function clearReadyTimer() {
+    if (readyTimer !== undefined) clearTimeout(readyTimer);
+    readyTimer = undefined;
+  }
+
   function schedulePickerRefresh() {
     cancelPickerRefresh();
-    if (!pickerOpen && pickerMounted && !destroyed) {
+    if (!pickerOpen && pickerMounted && !pickerStarting && !destroyed) {
       pickerTimer = setTimeout(() => { void refreshPicker(); }, pickerRefreshInterval);
     }
   }
 
+  function removePicker(id: number) {
+    pickers.get(id)?.dispose();
+    pickers.delete(id);
+    pickerSlots = pickerSlots.filter(slot => slot.id !== id);
+  }
+
+  function promotePicker() {
+    if (candidateId === undefined || !candidateReady || (activePickerId !== null && pickers.get(activePickerId)?.isSelecting())) return;
+    const previous = activePickerId;
+    activePickerId = candidateId;
+    candidateId = undefined;
+    candidateReady = false;
+    pickerStarting = false;
+    clearReadyTimer();
+    if (previous !== null && previous !== activePickerId) removePicker(previous);
+    schedulePickerRefresh();
+  }
+
+  function pickerReady(id: number) {
+    if (candidateId !== id) return;
+    candidateReady = true;
+    clearReadyTimer();
+    promotePicker();
+  }
+
+  function pickerFailure(id: number, failure: unknown) {
+    if (destroyed || !pickerSlots.some(slot => slot.id === id)) return;
+    if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
+    removePicker(id);
+    if (candidateId === id) { candidateId = undefined; candidateReady = false; pickerStarting = false; clearReadyTimer(); }
+    if (activePickerId === id) {
+      if (candidateId !== undefined) removePicker(candidateId);
+      candidateId = undefined; candidateReady = false; pickerStarting = false; clearReadyTimer();
+      activePickerId = null; pickerMounted = false; closePicker();
+    }
+    actionError = failure.message;
+    schedulePickerRefresh();
+  }
+
   async function refreshPicker() {
-    if (pickerStarting || picker?.isSelecting()) return;
+    if (pickerStarting || (activePickerId !== null && pickers.get(activePickerId)?.isSelecting())) return;
     cancelPickerRefresh();
     pickerStarting = true;
-    picker?.dispose();
-    picker = undefined;
-    pickerGeneration++;
-    try {
-      await tick();
-      if (destroyed || !pickerMounted) return;
-      if (!auth || !pickerFrame) throw new Error('OneDrive picker cannot start without authentication and a frame.');
-      picker = createOneDrivePicker(pickerFrame, () => auth!.getPickerToken(), selectPickerFolder, closePicker, pickerFailure);
-    } finally {
-      pickerStarting = false;
-      schedulePickerRefresh();
-    }
+    const id = ++nextPickerId;
+    candidateId = id;
+    candidateReady = false;
+    pickerSlots.push({ id });
+    if (activePickerId === null) activePickerId = id;
+    await tick();
+    if (destroyed || candidateId !== id) return;
+    const frame = pickerSlots.find(slot => slot.id === id)?.frame;
+    if (!auth || !frame) throw new Error('OneDrive picker cannot start without authentication and a frame.');
+    const instance = createOneDrivePicker(frame, () => auth!.getPickerToken(), folder => {
+      if (activePickerId !== id) throw new DeckRequestError('This folder picker is not active.');
+      return selectPickerFolder(folder);
+    }, () => { if (activePickerId === id) closePicker(); }, error => pickerFailure(id, error), () => { if (activePickerId === id) { handlePickerSelected(); promotePicker(); } }, () => pickerReady(id));
+    pickers.set(id, instance);
+    readyTimer = setTimeout(() => pickerFailure(id, new DeckRequestError('The OneDrive folder picker did not respond. Please try refreshing it.')), 30000);
   }
 
   async function run(operation: () => Promise<void>) {
@@ -121,12 +173,16 @@
   }
 
   function closePicker() {
-    if (picker?.isSelecting()) return;
+    if (activePickerId !== null && pickers.get(activePickerId)?.isSelecting()) return;
     const wasOpen = pickerOpen;
     pickerOpen = false;
     onPickerChange(false);
     schedulePickerRefresh();
     if (wasOpen) void tick().then(() => pickerTrigger?.focus());
+  }
+
+  function handlePickerSelected() {
+    if (window.matchMedia('(aspect-ratio < 5/6)').matches) closePicker();
   }
 
   async function selectPickerFolder(folder: { id: string; driveId: string }) {
@@ -141,15 +197,6 @@
       if (!item.folder) throw new DeckRequestError('The selected item is not a folder in the connected OneDrive.');
       await selectFolder(item);
     } finally { busy = false; onBusy(false); }
-  }
-
-  function pickerFailure(failure: unknown) {
-    picker = undefined;
-    pickerMounted = false;
-    cancelPickerRefresh();
-    closePicker();
-    if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
-    actionError = failure.message;
   }
 
   async function openPicker() {
@@ -191,7 +238,7 @@
       const returned = await auth!.completeSignIn();
       if (returned || auth!.isConnected()) await connect();
     });
-    return () => { destroyed = true; cancelPickerRefresh(); picker?.dispose(); };
+    return () => { destroyed = true; cancelPickerRefresh(); clearReadyTimer(); for (const instance of pickers.values()) instance.dispose(); };
   });
 </script>
 
@@ -239,7 +286,9 @@
   .picker-hidden { visibility: hidden; pointer-events: none; animation: none; }
   .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
   .picker-header-actions { display: flex; gap: 1rem; }
-  .picker-pane iframe { border: 0; width: 100%; flex: 1; min-height: 0; }
+  .picker-frames { position: relative; flex: 1; min-height: 0; }
+  .picker-pane iframe { position: absolute; inset: 0; border: 0; width: 100%; height: 100%; }
+  .picker-pane iframe.pending { opacity: 0; pointer-events: none; }
   .picker-resize { position: absolute; z-index: 1; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
   .picker-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
   @media (aspect-ratio < 5/6) { .picker-pane { width: min(100vw, 40vh); } .picker-resize { display: none; } }
@@ -250,9 +299,13 @@
 <svelte:window onkeydown={event => { if (pickerOpen && event.key === 'Escape') closePicker(); }} />
 {#if pickerMounted}
   <aside class="picker-pane" class:picker-hidden={!pickerOpen} inert={!pickerOpen} aria-hidden={!pickerOpen} aria-label="Choose a OneDrive folder">
-    <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={closePicker} aria-label="Close folder picker">Close</button></div></div>
+    <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy || pickerStarting} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={closePicker} aria-label="Close folder picker">Close</button></div></div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: A focusable separator is the accessible window-splitter pattern. -->
     <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(pickerWidth)} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
-    {#key pickerGeneration}<iframe bind:this={pickerFrame} title="OneDrive folder picker"></iframe>{/key}
+    <div class="picker-frames">
+      {#each pickerSlots as slot (slot.id)}
+        <iframe bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} title="OneDrive folder picker"></iframe>
+      {/each}
+    </div>
   </aside>
 {/if}

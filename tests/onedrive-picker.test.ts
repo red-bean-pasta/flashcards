@@ -22,7 +22,9 @@ test('persistent picker validates initialization and handles repeated selections
   try {
     const selected: string[] = [];
     let closes = 0;
-    const picker = createOneDrivePicker(env.frame, async () => 'personal-token', async folder => { selected.push(folder.id); }, () => { closes++; }, error => { throw error; });
+    let selections = 0;
+    let ready = 0;
+    const picker = createOneDrivePicker(env.frame, async () => 'personal-token', async folder => { selected.push(folder.id); }, () => { closes++; }, error => { throw error; }, () => { selections++; }, () => { ready++; });
     await new Promise(resolve => setImmediate(resolve));
     const form = env.getForm();
     const url = new URL(form.action);
@@ -35,7 +37,9 @@ test('persistent picker validates initialization and handles repeated selections
     env.initialize({ ...event, source: {} });
     env.initialize({ ...event, data: { ...event.data, channelId: 'wrong' } });
     assert.equal(env.sent.length, 0);
+    assert.equal(ready, 0);
     env.initialize(event);
+    assert.equal(ready, 1);
     env.command({ type: 'command', id: 'auth', data: { command: 'authenticate' } });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(env.sent.at(-1), { type: 'result', id: 'auth', data: { result: 'token', token: 'personal-token' } });
@@ -44,9 +48,10 @@ test('persistent picker validates initialization and handles repeated selections
       await new Promise(resolve => setImmediate(resolve));
     }
     assert.deepEqual(selected, ['first', 'second']);
-    assert.equal(closes, 2);
+    assert.equal(selections, 2);
+    assert.equal(closes, 0);
     env.command({ type: 'command', id: 'close', data: { command: 'close' } });
-    assert.equal(closes, 3);
+    assert.equal(closes, 1);
     picker.dispose();
   } finally { env.restore(); }
 });
@@ -57,7 +62,7 @@ test('selection remains in flight until completed and errors are reported', asyn
     let failSelection!: (error: Error) => void;
     let reported: unknown;
     let closes = 0;
-    const picker = createOneDrivePicker(env.frame, async () => 'token', () => new Promise<void>((_, reject) => { failSelection = reject; }), () => { closes++; }, error => { reported = error; });
+    const picker = createOneDrivePicker(env.frame, async () => 'token', () => new Promise<void>((_, reject) => { failSelection = reject; }), () => { closes++; }, error => { reported = error; }, () => {}, () => {});
     await new Promise(resolve => setImmediate(resolve));
     const channelId = JSON.parse(new URL(env.getForm().action).searchParams.get('filePicker')!).messaging.channelId;
     env.initialize({ origin: 'https://onedrive.live.com', source: env.source, data: { type: 'initialize', channelId }, ports: [env.port] });
@@ -77,7 +82,7 @@ test('disposing before token acquisition prevents submission', async () => {
   const env = setup();
   try {
     let supply!: (token: string) => void;
-    const picker = createOneDrivePicker(env.frame, () => new Promise(resolve => { supply = resolve; }), async () => {}, () => {}, error => { throw error; });
+    const picker = createOneDrivePicker(env.frame, () => new Promise(resolve => { supply = resolve; }), async () => {}, () => {}, error => { throw error; }, () => {}, () => {});
     picker.dispose();
     supply('token');
     await new Promise(resolve => setImmediate(resolve));
