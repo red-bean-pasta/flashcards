@@ -9,6 +9,7 @@ function pickerOptions(channelId: string) {
     sdk: '8.0', entry: { oneDrive: { files: {} } }, authentication: {},
     messaging: { origin: location.origin, channelId },
     typesAndSources: { mode: 'folders', locations: { oneDrive: {} } },
+    accessibility: { trapFocusOnLoad: false },
     selection: { mode: 'single' }, commands: { switchAccount: { mode: 'none' } },
   };
 }

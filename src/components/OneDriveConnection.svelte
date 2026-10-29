@@ -199,6 +199,12 @@
     } finally { busy = false; onBusy(false); }
   }
 
+  async function preparePicker() {
+    if (destroyed || pickerMounted) return;
+    pickerMounted = true;
+    await refreshPicker();
+  }
+
   async function openPicker() {
     if (!auth || !graph) throw new Error('OneDrive client has not been connected.');
     if (pickerOpen) { closePicker(); return; }
@@ -207,10 +213,7 @@
     actionError = '';
     pickerOpen = true;
     onPickerChange(true);
-    if (!pickerMounted) {
-      pickerMounted = true;
-      await refreshPicker();
-    }
+    await preparePicker();
   }
 
   async function connect() {
@@ -219,6 +222,7 @@
     graph = createGraphClient(() => auth!.getAccessToken());
     connection = createFolderConnection(graph, createFolderMemory(clientId, () => sessionStorage), applySelection);
     await connection.restore();
+    void preparePicker();
   }
 
   export function startConnection() {
