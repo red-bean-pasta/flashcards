@@ -60,7 +60,7 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
       state: {
         folder, recovery, recoveryError: '',
         backend: {
-          load: () => store.load(),
+          load: signal => store.load(signal),
           mutate: (request, snapshot) => inspectAfter(session, () => store.mutate(request, snapshot)),
         },
       },

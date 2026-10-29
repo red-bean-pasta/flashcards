@@ -291,6 +291,7 @@ a { color: inherit; }
 }
 .empty-prompt {
   width: min(100%, 760px);
+  text-align: left;
   font: var(--question-font-size) / 1.5 serif;
   opacity: var(--empty-prompt-opacity);
   letter-spacing: -.5px;

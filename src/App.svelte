@@ -59,7 +59,7 @@
       onDeck: applyDeck,
       onError: message => { networkError = message; },
       onLoading: value => { loading = value; },
-    }, () => currentBackend.load());
+    }, signal => currentBackend.load(signal));
     void loader.refresh();
   }
 
@@ -96,7 +96,7 @@
 <svelte:window onkeydown={handleKey} />
 
 <div class="shell" class:has-progress={showProgress}>
-  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction && !loading} />
+  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} active={activeStorage} canSwitch={!dialogAction} />
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
@@ -107,9 +107,15 @@
             {#if networkError}<p>{networkError}</p><button use:sizeActionButton class="primary-action" disabled={loading || storageBusy} onclick={refresh}><span>Retry</span></button>{/if}
           </section>
         {:else if loading}
-          <p class="section-label" role="status">Loading…</p>
+          <section class="empty-prompt"><p role="status">Loading…</p></section>
         {:else if !backend}
-          <section class="empty-prompt"><p><button disabled={storageBusy || !import.meta.env.VITE_ONEDRIVE_CLIENT_ID} onclick={() => oneDriveConnection.startConnection()}>Connect your cloud storage</button> to start practicing your notes.</p></section>
+          <section class="empty-prompt">
+            {#if storageBusy}
+              <p role="status">Connecting…</p>
+            {:else}
+              <p><button disabled={!import.meta.env.VITE_ONEDRIVE_CLIENT_ID} onclick={() => oneDriveConnection.startConnection()}>Connect your cloud storage</button> to start practicing your notes.</p>
+            {/if}
+          </section>
         {:else if current}
           {#key current.id}
             <Flashcard card={current} {revealed} hasPrevious={index > 0}

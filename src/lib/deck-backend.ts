@@ -3,7 +3,7 @@ import { fetchDeck, submitMutation } from './deck-client.js';
 import type { DeckState, MutationRequest } from './types.js';
 
 export interface DeckBackend {
-  load(): Promise<DeckState>;
+  load(signal?: AbortSignal): Promise<DeckState>;
   mutate(request: MutationRequest, snapshot: DeckState): Promise<DeckState>;
 }
 

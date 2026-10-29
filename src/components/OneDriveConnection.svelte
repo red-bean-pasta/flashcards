@@ -104,7 +104,6 @@
     {/if}
   </div>
   {#if !clientId}<p class="storage-hint">OneDrive isn’t configured for this site.</p>{/if}
-  {#if busy}<p role="status" class="storage-hint">Connecting…</p>{/if}
   {#if actionError || recoveryError}
     {#if actionError}<p role="alert" class="save-error">{actionError}</p>{/if}
     {#if recoveryError}<p role="alert" class="save-error">{recoveryError}</p>{/if}

@@ -22,25 +22,28 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   const journal = createOperationJournal(graph, folder.id);
   let saving = false;
 
-  async function scan(id: string, prefix = '', ancestors = new Set<string>()): Promise<void> {
+  async function scan(id: string, found: Map<string, GraphItem>, signal?: AbortSignal, prefix = '', ancestors = new Set<string>()): Promise<void> {
+    signal?.throwIfAborted();
     if (ancestors.has(id)) throw new DeckRequestError('OneDrive returned a recursive folder.');
     const nextAncestors = new Set([...ancestors, id]);
     for (const item of await graph.children(id)) {
+      signal?.throwIfAborted();
       if (item.name.startsWith('.') || item.name.toLowerCase() === 'removed.md') continue;
       const source = prefix + item.name;
-      if (item.folder) await scan(item.id, source + '/', nextAncestors);
-      else if (item.file && /\.md$/i.test(item.name)) sources.set(source, item);
+      if (item.folder) await scan(item.id, found, signal, source + '/', nextAncestors);
+      else if (item.file && /\.md$/i.test(item.name)) found.set(source, item);
     }
   }
 
-  async function load(): Promise<DeckState> {
+  async function load(signal?: AbortSignal): Promise<DeckState> {
     try {
-      sources.clear();
-      await scan(folder.id);
+      const found = new Map<string, GraphItem>();
+      await scan(folder.id, found, signal);
       const cards: DeckState['cards'] = [];
       const errors: string[] = [];
       const revisions: Record<string, string> = {};
-      for (const [source, item] of sources) {
+      for (const [source, item] of found) {
+        signal?.throwIfAborted();
         try {
           const snapshot = await graph.readText(item.id);
           cards.push(...parse(snapshot.text, source));
@@ -50,6 +53,9 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
           errors.push(error.message);
         }
       }
+      signal?.throwIfAborted();
+      sources.clear();
+      for (const [source, item] of found) sources.set(source, item);
       return { cards: errors.length ? [] : cards, files: [...sources.keys()].sort(), revisions, errors };
     } catch (error) { asDeckError(error); }
   }

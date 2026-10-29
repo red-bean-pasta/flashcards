@@ -81,6 +81,25 @@ test('loader ignores stale responses and responses after unmount', async () => {
   await assert.rejects(loader.refresh(), /closed/);
 });
 
+test('a timed out load reports an error, stops loading and ignores a late result', async () => {
+  let finish!: (value: DeckState) => void;
+  let signal!: AbortSignal;
+  const received: DeckState[] = [];
+  const states: boolean[] = [];
+  const errors: string[] = [];
+  const loader = createDeckLoader({
+    onDeck: value => received.push(value), onError: value => errors.push(value), onLoading: value => states.push(value),
+  }, current => { signal = current; return new Promise(resolve => { finish = resolve; }); }, 10);
+  await loader.refresh();
+  assert.equal(signal.aborted, true);
+  assert.match(errors[0], /longer than one minute/);
+  assert.deepEqual(states, [true, false]);
+  finish(deck);
+  await Promise.resolve();
+  assert.deepEqual(received, []);
+  loader.close();
+});
+
 test('refresh announces loading before requesting a snapshot, including every subsequent refresh', async () => {
   let loading = false;
   let finish!: (value: DeckState) => void;
