@@ -1,5 +1,9 @@
 :root {
+  --file-selector-default-width-ratio: 0.333333; /* Fraction of viewport width; saved resizing takes precedence. */
+  --card-panel-default-width-ratio: 0.333333; /* Shared by Add and Edit; fraction of viewport width. */
   --action-width-ratio: 1.8;      /* Green button width / rendered label width. */
+  --action-min-width: 80px;       /* Minimum width for short action labels. */
+  --action-max-margin: 24px;      /* Maximum space on each side of a label. */
   --action-height-ratio: 2.3;     /* Green button height / label line height. */
   --dialog-color: #f5f4ef;
   --dialog-input-color: #fffdf6;
@@ -47,11 +51,16 @@ a { color: inherit; }
   position: relative;
   height: 100dvh;
   margin-left: 0;
-  transition: margin-left 300ms ease;
+  transition: margin-left 300ms ease, margin-right 300ms ease;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
-@media (min-aspect-ratio: 5/6) { .shell.picker-open { margin-left: clamp(40vh, var(--picker-width), 75vw); } }
+.shell { --picker-visible-width: min(100vw, 40vh); }
+@media (min-aspect-ratio: 5/6) {
+  .shell { --picker-visible-width: clamp(40vh, var(--picker-width), 75vw); }
+  .shell.picker-open { margin-left: var(--picker-visible-width); }
+}
+.shell.add-push { margin-right: var(--add-panel-width); }
 .shell.picker-resizing { transition: none; }
 @media (prefers-reduced-motion: reduce) { .shell { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
@@ -154,7 +163,7 @@ a { color: inherit; }
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
-  width: calc(var(--action-label-width) * var(--action-width-ratio));
+  width: clamp(var(--action-min-width), calc(var(--action-label-width) * var(--action-width-ratio)), calc(var(--action-label-width) + 2 * var(--action-max-margin)));
   height: calc(var(--action-label-height) * var(--action-height-ratio));
   margin-top: 36px;
   padding: 0;
@@ -345,11 +354,11 @@ dialog {
   padding: 28px; color: #293f39; background: var(--dialog-color);
 }
 dialog::backdrop { background: var(--dialog-backdrop); }
-dialog h2 { margin: 0 0 22px; font-size: 1.35rem; font-weight: 400; }
-dialog label { display: block; margin: 18px 0 8px; }
-dialog input, dialog textarea { width: 100%; padding: 10px; border: 1px solid #b9c2ae; border-radius: 4px; color: inherit; background: var(--dialog-input-color); font: inherit; }
-dialog textarea { display: block; resize: none; min-height: var(--textarea-min-height); line-height: 1.5; }
-dialog input:focus-visible, dialog textarea:focus-visible { outline: 2px solid #9ca98d; outline-offset: 2px; }
+dialog h2, .add-panel h2 { margin: 0 0 22px; font-size: 1.35rem; font-weight: 400; }
+dialog label, .add-panel label { display: block; margin: 18px 0 8px; }
+dialog input, dialog textarea, .add-panel input, .add-panel textarea { width: 100%; padding: 10px; border: 1px solid #b9c2ae; border-radius: 4px; color: inherit; background: var(--dialog-input-color); font: inherit; }
+dialog textarea, .add-panel textarea { display: block; resize: none; min-height: var(--textarea-min-height); line-height: 1.5; }
+dialog input:focus-visible, dialog textarea:focus-visible, .add-panel input:focus-visible, .add-panel textarea:focus-visible { outline: 2px solid #9ca98d; outline-offset: 2px; }
 .file-picker { position: relative; }
 .file-suggestions {
   position: absolute; z-index: 1; top: calc(100% + 6px); left: 0; right: 0;
@@ -365,6 +374,37 @@ dialog input:focus-visible, dialog textarea:focus-visible { outline: 2px solid #
 .dialog-actions .primary-action { margin: 0; }
 .primary-action:disabled { opacity: .5; cursor: default; }
 .save-error { color: #965331; line-height: 1.5; }
-.remove-confirmation { line-height: 1.8; max-height: 260px; overflow: auto; overflow-wrap: anywhere; }
-.remove-question { white-space: pre-wrap; }
-.recovery-note { margin: 20px 0 0; padding-left: 16px; border-left: 2px solid #c5ceba; color: #75806e; line-height: 1.6; }
+dialog.remove-banner {
+  position: fixed; left: 0; right: 0; top: auto; bottom: 0; margin: 0;
+  width: 100%; max-width: none; max-height: 100dvh;
+  border: 0; border-radius: 0;
+  box-shadow: 0 5px 20px rgb(0 0 0 / .18);
+  animation: removal-slide-up 140ms ease both;
+}
+dialog.remove-banner::backdrop { background: transparent; }
+dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - min(100vw, 40vh)); }
+@media (min-aspect-ratio: 5/6) {
+  dialog.remove-banner.picker-open { left: clamp(40vh, var(--picker-width), 75vw); width: calc(100% - clamp(40vh, var(--picker-width), 75vw)); }
+}
+.remove-banner form { display: flex; align-items: center; gap: 24px; }
+.remove-banner .dialog-actions { flex: 0 0 auto; margin: 0 0 0 auto; }
+.remove-confirmation { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.remove-banner .save-error { margin: 0; }
+@media (max-width: 700px) { .remove-banner form { flex-wrap: wrap; } }
+@keyframes removal-slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { dialog.remove-banner { animation: none; } }
+.remove-confirmation p { margin: 0; }
+.remove-confirmation blockquote { margin: 6px 0 0; padding-left: 12px; border-left: 2px solid #c5ceba; color: #75806e; }
+
+.add-panel { position: fixed; z-index: 10; inset: 0 0 0 auto; width: var(--add-panel-width); background: var(--dialog-color); box-shadow: -2px 0 18px #0002; animation: add-panel-enter 300ms ease both; }
+.add-panel-content { height: 100%; overflow: auto; padding: 28px; }
+.add-panel-content form { display: flex; flex-direction: column; height: 100%; }
+.add-panel-content form > * { flex-shrink: 0; }
+.add-panel-content #card-question { flex: 3 1 auto; }
+.add-panel-content #card-answer { flex: 8 1 auto; }
+.add-panel-content .dialog-actions { margin-top: 24px; }
+.add-panel-resize { position: absolute; z-index: 2; top: 0; left: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+.add-panel-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
+@media (aspect-ratio < 5/6) { .add-panel-resize { display: none; } }
+@keyframes add-panel-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .add-panel { animation: none; } }

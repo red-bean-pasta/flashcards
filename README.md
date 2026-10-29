@@ -92,7 +92,7 @@ Press **Space** to reveal or advance, **←** to revisit, and **→** to advance
 
 > The server defaults to `127.0.0.1:5173`; set `HOST` and `PORT` to change it.
 
-> For appearance tweaks, see the variables at the top of [src/style.css](src/style.css).
+> For appearance tweaks, see the variables at the top of [src/style.css](src/style.css). The file selector and shared Add/Edit panel default widths are viewport ratios; a saved file-selector width takes precedence, and panel minimums still apply.
 
 ## OneDrive Personal and static hosting
 

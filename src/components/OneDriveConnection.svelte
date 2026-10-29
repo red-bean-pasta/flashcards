@@ -172,13 +172,13 @@
     resizePicker((pickerWidth + (event.key === 'ArrowRight' ? 2 : -2)) / 100 * window.innerWidth);
   }
 
-  function closePicker() {
+  export function closePicker(restoreFocus = true) {
     if (activePickerId !== null && pickers.get(activePickerId)?.isSelecting()) return;
     const wasOpen = pickerOpen;
     pickerOpen = false;
     onPickerChange(false);
     schedulePickerRefresh();
-    if (wasOpen) void tick().then(() => pickerTrigger?.focus());
+    if (wasOpen && restoreFocus) void tick().then(() => pickerTrigger?.focus());
   }
 
   function handlePickerSelected() {
@@ -205,7 +205,7 @@
     await refreshPicker();
   }
 
-  async function openPicker() {
+  export async function openPicker() {
     if (!auth || !graph) throw new Error('OneDrive client has not been connected.');
     if (pickerOpen) { closePicker(); return; }
     cancelPickerRefresh();
@@ -286,7 +286,8 @@
   .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
 
-  .picker-pane { position: fixed; z-index: 10; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); box-shadow: 2px 0 18px #0002; animation: picker-enter 300ms ease both; }
+  .picker-pane { position: fixed; z-index: 10; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); animation: picker-enter 300ms ease both; }
+  .picker-pane::after { content: ''; position: absolute; z-index: 2; inset: 0; box-shadow: inset -12px 0 18px -14px rgb(0 0 0 / .25); pointer-events: none; }
   .picker-hidden { visibility: hidden; pointer-events: none; animation: none; }
   .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
   .picker-header-actions { display: flex; gap: 1rem; }
@@ -303,7 +304,7 @@
 <svelte:window onkeydown={event => { if (pickerOpen && event.key === 'Escape') closePicker(); }} />
 {#if pickerMounted}
   <aside class="picker-pane" class:picker-hidden={!pickerOpen} inert={!pickerOpen} aria-hidden={!pickerOpen} aria-label="Choose a OneDrive folder">
-    <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy || pickerStarting} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={closePicker} aria-label="Close folder picker">Close</button></div></div>
+    <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy || pickerStarting} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={() => closePicker()} aria-label="Close folder picker">Close</button></div></div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: A focusable separator is the accessible window-splitter pattern. -->
     <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(pickerWidth)} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
     <div class="picker-frames">

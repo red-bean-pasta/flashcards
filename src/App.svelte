@@ -19,8 +19,34 @@
   let loading = $state(true);
   let storageBusy = $state(false);
   let pickerOpen = $state(false);
-  let pickerWidth = $state(100 / 3);
+  let pickerWidth = $state(0);
   let pickerResizing = $state(false);
+  let addWidth = $state(0);
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
+  let addResizing = $state(false);
+  let restorePicker = false;
+  const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
+    ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
+    : Math.min(viewportWidth, viewportHeight * .4)));
+  const addPushes = $derived((dialogAction === 'add' || dialogAction === 'edit') && addPanelPixels < viewportWidth * .4);
+
+  function openCardPanel(action: 'add' | 'edit') {
+    restorePicker = pickerOpen && window.matchMedia('(min-aspect-ratio: 5/6)').matches;
+    oneDriveConnection.closePicker(false);
+    dialogAction = action;
+  }
+
+  function closeCardPanel() {
+    dialogAction = null;
+    if (restorePicker && window.matchMedia('(min-aspect-ratio: 5/6)').matches) void oneDriveConnection.openPicker();
+    restorePicker = false;
+  }
+
+  function updateViewport() { viewportWidth = window.innerWidth; viewportHeight = window.innerHeight; }
+  function resizeAdd(clientX: number) {
+    addWidth = Math.min(75, Math.max(viewportHeight * .4 / viewportWidth * 100, (viewportWidth - clientX) / viewportWidth * 100));
+  }
 
   function updatePickerWidth(width: number) {
     pickerWidth = width;
@@ -95,7 +121,16 @@
     if (event.key === 'ArrowLeft') showPrevious();
   }
 
+  function defaultPanelWidth(property: string): number {
+    const ratio = Number(getComputedStyle(document.documentElement).getPropertyValue(property).trim());
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > .75) throw new Error(`${property} must be a number greater than 0 and at most 0.75.`);
+    return ratio * 100;
+  }
+
   onMount(() => {
+    pickerWidth = defaultPanelWidth('--file-selector-default-width-ratio');
+    addWidth = defaultPanelWidth('--card-panel-default-width-ratio');
+    updateViewport();
     const savedWidth = Number(localStorage.getItem('onedrive-picker-width'));
     if (savedWidth >= 1 && savedWidth <= 75) pickerWidth = savedWidth;
     mountLoader();
@@ -103,9 +138,9 @@
   });
 </script>
 
-<svelte:window onkeydown={handleKey} />
+<svelte:window onkeydown={handleKey} onresize={updateViewport} />
 
-<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing} style:--picker-width={pickerWidth + 'vw'}>
+<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:add-push={addPushes} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
   <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} onPickerChange={value => { pickerOpen = value; }} {pickerWidth} onPickerWidth={updatePickerWidth} onPickerResizing={value => { pickerResizing = value; }} active={activeStorage} canSwitch={!dialogAction} />
   <div class="practice-scroll">
     <div class="practice-page">
@@ -142,9 +177,9 @@
         <Collection files={deck.files} total={deck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
-          <button class="text-action" disabled={loading || storageBusy || blocked || !backend} onclick={() => { dialogAction = 'add'; }}>Add</button>
-          <button class="text-action" disabled={loading || storageBusy || blocked || !current} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
-          <button class="text-action" disabled={loading || storageBusy || blocked || !current} onclick={() => { dialogAction = 'edit'; }}>Edit</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => openCardPanel('add')}>Add</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !current || !!dialogAction} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
+          <button class="text-action" disabled={loading || storageBusy || blocked || !current || !!dialogAction} onclick={() => openCardPanel('edit')}>Edit</button>
           <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
         </nav>
       </footer>
@@ -153,7 +188,7 @@
 
   {#if dialogAction}
     <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
-      onSubmit={saveCard} allOccurrences={activeStorage === 'onedrive'} onClose={() => { dialogAction = null; }} />
+      onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={activeStorage === 'onedrive'} onClose={closeCardPanel} />
   {/if}
 
   {#if showProgress}

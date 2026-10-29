@@ -8,9 +8,9 @@
   import { resolveSource, sourceLabel } from '../lib/source-names';
   import { DeckRequestError } from '../lib/deck-client';
 
-  let { action, card, deck, selectedSource, onSubmit, onClose, allOccurrences = false }: {
+  let { action, card, deck, selectedSource, onSubmit, onClose, pickerOpen, addWidth, onResizeAdd, onAddResizing, allOccurrences = false }: {
     action: 'add' | 'edit' | 'remove'; card: Card | undefined; deck: DeckState; selectedSource: string;
-    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; allOccurrences?: boolean;
+    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; pickerOpen: boolean; addWidth: number; onResizeAdd: (clientX: number) => void; onAddResizing: (value: boolean) => void; allOccurrences?: boolean;
   } = $props();
   // The current practice card may disappear while an asynchronous Remove
   // completes. The dialog owns the card snapshot it was opened for.
@@ -19,7 +19,8 @@
     if (action !== 'add' && !targetCard) throw new Error('Edit and Remove require a current card.');
     return { question: action === 'add' ? '' : targetCard!.question, answer: action === 'add' ? '' : targetCard!.answer, source: selectedSource || 'default.md' };
   });
-  let dialog: HTMLDialogElement;
+  let dialog = $state<HTMLDialogElement>(undefined!);
+  let panel = $state<HTMLElement>(undefined!);
   let question = $state(initial.question);
   let answer = $state(initial.answer);
   let fileInput = $state(sourceLabel(initial.source));
@@ -57,18 +58,25 @@
 
   onMount(() => {
     const previous = document.activeElement;
+    if (action !== 'remove') {
+      panel.querySelector<HTMLElement>(action === 'add' ? 'input' : 'textarea')?.focus();
+      return () => { if (previous instanceof HTMLElement) previous.focus(); };
+    }
     dialog.showModal();
     return () => { dialog.close(); if (previous instanceof HTMLElement) previous.focus(); };
   });
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="card-dialog-title" oncancel={event => { event.preventDefault(); close(); }}>
+{#snippet cardForm()}
   <form onsubmit={save} aria-busy={busy}>
-    <h2 id="card-dialog-title">{action === 'add' ? 'Add card' : action === 'edit' ? 'Edit card' : 'Confirm removal'}</h2>
-    {#if allOccurrences && action !== 'add'}<p>Applies to every identical question-and-answer pair in this file.</p>{/if}
+    {#if action !== 'remove'}<h2 id="card-dialog-title">{action === 'add' ? 'Add card' : 'Edit card'}</h2>{/if}
+    {#if allOccurrences && action === 'edit'}<p>Applies to every identical question-and-answer pair in this file.</p>{/if}
     {#if action === 'remove'}
-      <p class="remove-confirmation">Remove card <em class="remove-question">“{targetCard!.question}”</em> from <em>{sourceLabel(targetCard!.source)}</em>?</p>
-      <blockquote class="recovery-note">You can restore it later from <code>removed.md</code>.</blockquote>
+      <div class="remove-confirmation">
+        <p id="card-dialog-title">Remove this card from <em>{sourceLabel(targetCard!.source)}</em>?</p>
+        {#if allOccurrences}<blockquote><p>This applies to every identical question-and-answer pair in this file.</p></blockquote>{/if}
+        <blockquote><p>You can restore it later from <code>removed.md</code>.</p></blockquote>
+      </div>
     {:else}
       {#if action === 'add'}
         <FilePicker files={deck.files} bind:text={fileInput} bind:chosen={chosenSource} disabled={busy} />
@@ -85,4 +93,21 @@
       <button use:sizeActionButton type="submit" class="primary-action" disabled={busy}><span>{busy ? 'Saving…' : action === 'remove' ? 'Remove' : 'Save'}</span></button>
     </div>
   </form>
+{/snippet}
+
+<svelte:window onkeydown={event => { if (action !== 'remove' && event.key === 'Escape' && !event.defaultPrevented) close(); }} />
+{#if action !== 'remove'}
+  <aside class="add-panel" bind:this={panel} aria-labelledby="card-dialog-title">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: Keyboard-accessible window splitter. -->
+    <div class="add-panel-resize" role="separator" tabindex="0" aria-label={action === 'add' ? 'Resize add panel' : 'Resize edit panel'} aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(addWidth)}
+      onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(event.clientX); } }}
+      onpointermove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) onResizeAdd(event.clientX); }}
+      onlostpointercapture={() => onAddResizing(false)}
+      onkeydown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); onResizeAdd(window.innerWidth * (1 - (addWidth + (event.key === 'ArrowLeft' ? 2 : -2)) / 100)); } }}></div>
+    <div class="add-panel-content">{@render cardForm()}</div>
+  </aside>
+{:else}
+<dialog bind:this={dialog} class:remove-banner={action === 'remove'} class:picker-open={pickerOpen} aria-labelledby="card-dialog-title" oncancel={event => { event.preventDefault(); close(); }}>
+  {@render cardForm()}
 </dialog>
+{/if}
