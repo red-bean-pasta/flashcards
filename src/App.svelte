@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { sizeActionButton } from './lib/size-action-button';
   import { onMount } from 'svelte';
   import CardDialog from './components/CardDialog.svelte';
   import OneDriveConnection from './components/OneDriveConnection.svelte';
@@ -9,7 +8,8 @@
   import Progress from './components/Progress.svelte';
   import type { DeckState, MutationRequest } from './lib/types';
   import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession, updateSession } from './lib/session';
-  import { createDeckLoader } from './lib/deck-loader';
+  import { createDeckLoader, loadTimeoutMessage } from './lib/deck-loader';
+  import { DeckRequestError } from './lib/deck-client';
 
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
@@ -26,6 +26,7 @@
   let viewportHeight = $state(0);
   let addResizing = $state(false);
   let restorePicker = false;
+  const preview = import.meta.env.DEV ? new URLSearchParams(window.location.search).get('preview') : null;
   const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
     ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
     : Math.min(viewportWidth, viewportHeight * .4)));
@@ -85,15 +86,16 @@
     deck = next;
   }
 
-  function mountLoader() {
+  function mountLoader(request?: (signal: AbortSignal) => Promise<DeckState>) {
     loader?.close();
-    if (!backend) { loading = false; return; }
     const currentBackend = backend;
+    const load = request ?? (currentBackend ? (signal: AbortSignal) => currentBackend.load(signal) : undefined);
+    if (!load) { loading = false; loader = undefined; return; }
     loader = createDeckLoader({
       onDeck: applyDeck,
       onError: message => { networkError = message; },
       onLoading: value => { loading = value; },
-    }, signal => currentBackend.load(signal));
+    }, load);
     void loader.refresh();
   }
 
@@ -133,7 +135,13 @@
     updateViewport();
     const savedWidth = Number(localStorage.getItem('onedrive-picker-width'));
     if (savedWidth >= 1 && savedWidth <= 75) pickerWidth = savedWidth;
-    mountLoader();
+    if (preview === 'connection-error') {
+      mountLoader(async () => { throw new DeckRequestError(loadTimeoutMessage); });
+    } else if (preview === 'notes-error') {
+      mountLoader(async () => ({ cards: [], files: [], errors: ['notes.md:1: Expected an answer after the question.', 'notes.md:7: Found an incomplete flashcard.'], revisions: {} }));
+    } else {
+      mountLoader();
+    }
     return () => loader?.close();
   });
 </script>
@@ -146,11 +154,19 @@
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
         {#if blocked}
-          <section class="notice" role="alert">
-            <h1 class="section-label">{networkError ? 'Connection error' : 'Check your notes'}</h1>
-            {#each deck.errors as error}<pre>{error}</pre>{/each}
-            {#if networkError}<p>{networkError}</p><button use:sizeActionButton class="primary-action" disabled={loading || storageBusy} onclick={refresh}><span>Retry</span></button>{/if}
-          </section>
+          {#if networkError}
+            <section class="empty-prompt connection-error" role="alert">
+              <p>Connection Error.<br />{#if networkError === loadTimeoutMessage}{networkError.slice(0, -6)}<button disabled={loading || storageBusy} onclick={refresh}>retry</button>.{:else}{networkError} <button disabled={loading || storageBusy} onclick={refresh}>Retry</button>.{/if}</p>
+            </section>
+          {/if}
+          {#if deck.errors.length > 0}
+            <section class="notice" role="alert">
+              <h1>Couldn’t read your notes.</h1>
+              <div class="notice-errors">
+                {#each deck.errors as error}<pre>{error}</pre>{/each}
+              </div>
+            </section>
+          {/if}
         {:else if loading}
           <section class="empty-prompt"><p role="status">Loading…</p></section>
         {:else if !backend}

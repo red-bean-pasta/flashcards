@@ -17,7 +17,10 @@
   --textarea-min-height: 64px;    /* Minimum height when dragging the bottom edge. */
   /* Base: question body. rem follows the root font; vw follows viewport width. */
   --question-font-size: clamp(1.85rem, 3vw, 2.6rem);
-  --empty-prompt-opacity: 0.55;    /* Empty-state text relative to question text. */
+  --system-text-opacity: 0.75;     /* Status, empty-state and error heading visibility. */
+  --error-color: #8e2a2a;          /* Connection error and notes heading. */
+  --error-message-color: #8e2a2a;  /* Fully opaque notes diagnostics. */
+  --error-action-hover-color: #793737;
   --answer-font-ratio: 74%;        /* Of the question body. */
   --section-label-font-ratio: 35%; /* Both Question and Answer labels, of question body. */
   --source-font-ratio: 90%;        /* Of the Question label, not the question body. */
@@ -298,17 +301,26 @@ a { color: inherit; }
 .collection-count { white-space: nowrap; }
 
 .notice {
-  width: min(100%, 640px);
-  text-align: center;
-  color: #7c8575;
-  font-size: 13px;
-  line-height: 1.8;
+  width: max-content;
+  max-width: min(100%, 760px);
+  text-align: left;
+}
+.notice h1 {
+  margin: 0 0 20px;
+  color: var(--error-color);
+  font: var(--question-font-size) / 1.5 serif;
+  opacity: var(--system-text-opacity);
+  letter-spacing: -.5px;
+}
+.notice-errors {
+  max-height: min(40vh, 320px);
+  overflow: auto;
 }
 .empty-prompt {
   width: min(100%, 760px);
   text-align: left;
   font: var(--question-font-size) / 1.5 serif;
-  opacity: var(--empty-prompt-opacity);
+  opacity: var(--system-text-opacity);
   letter-spacing: -.5px;
   text-wrap: pretty;
 }
@@ -323,13 +335,16 @@ a { color: inherit; }
 }
 .empty-prompt button:hover:enabled { color: #345843; }
 .empty-prompt button:disabled { opacity: .5; cursor: default; }
+.connection-error { color: var(--error-color); }
+.connection-error button:hover:enabled { color: var(--error-action-hover-color); }
 .notice pre {
+  margin: 0 0 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  text-align: left;
-  color: #965331;
-  font-size: 12px;
+  color: var(--error-message-color);
+  font: 12px / 1.6 monospace;
 }
+.notice pre:last-child { margin-bottom: 0; }
 
 /* Portrait includes square viewports: height >= width. */
 @media (orientation: portrait) {

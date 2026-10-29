@@ -1,6 +1,8 @@
 import { DeckRequestError, fetchDeck } from './deck-client';
 import type { DeckState } from './types';
 
+export const loadTimeoutMessage = 'Loading took longer than one minute. Choose a smaller folder or retry.';
+
 type LoaderCallbacks = {
   onDeck(deck: DeckState): void;
   onError(message: string): void;
@@ -26,7 +28,7 @@ export function createDeckLoader(callbacks: LoaderCallbacks, request: (signal: A
         request(current.signal),
         new Promise<never>((_, reject) => { timer = setTimeout(() => {
           current.abort();
-          reject(new DeckRequestError('Loading took longer than one minute. Choose a smaller folder or retry.'));
+          reject(new DeckRequestError(loadTimeoutMessage));
         }, timeoutMs); }),
       ]);
     } catch (error) {
