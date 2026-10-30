@@ -1,0 +1,43 @@
+import { CardParseError } from './card-ranges.js';
+import { parseBrowserCards } from './browser-cards.js';
+import { DeckRequestError } from './deck-client.js';
+import type { DeckBackend } from './deck-backend.js';
+import type { DeckState } from './types.js';
+
+/** File inputs provide a snapshot, so a new selection is needed to refresh. */
+export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parseBrowserCards): DeckBackend {
+  const selected = [...files].filter(file => {
+    const parts = file.webkitRelativePath.split('/').slice(1);
+    return parts.length > 0 && parts.every(part => !part.startsWith('.')) &&
+      parts.at(-1)!.toLowerCase() !== 'removed.md' && /\.md$/i.test(parts.at(-1)!);
+  });
+  return {
+    async load(signal?: AbortSignal): Promise<DeckState> {
+      const cards: DeckState['cards'] = [];
+      const errors: string[] = [];
+      const revisions: Record<string, string> = {};
+      for (const file of selected) {
+        signal?.throwIfAborted();
+        const source = file.webkitRelativePath.split('/').slice(1).join('/');
+        try { cards.push(...parse(await file.text(), source)); }
+        catch (error) {
+          if (error instanceof CardParseError) errors.push(error.message);
+          else if (error instanceof DOMException) throw new DeckRequestError(error.message, { cause: error });
+          else throw error;
+        }
+        revisions[source] = `${file.lastModified}:${file.size}`;
+      }
+      return { cards: errors.length ? [] : cards, files: Object.keys(revisions).sort(), revisions, errors };
+    },
+    async mutate() { throw new DeckRequestError('Your browser does not support write to local storage'); },
+  };
+}
+
+/** The directory input exposes the selected root through each relative path. */
+export function selectedFolderName(files: FileList): string {
+  const first = files.item(0);
+  if (!first) throw new Error('A folder name requires at least one selected file.');
+  const parts = first.webkitRelativePath.split('/');
+  if (parts.length < 2 || !parts[0]) throw new Error('Selected folder files must include their root in the relative path.');
+  return parts[0];
+}

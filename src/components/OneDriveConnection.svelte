@@ -280,8 +280,6 @@
 </aside>
 
 <style>
-  .storage-connection { position: absolute; z-index: 3; top: 0; left: 0; right: 0; padding: 1rem 1.5rem; background: var(--dialog-color); font-size: .78rem; max-height: 40vh; overflow: auto; }
-  .storage-actions { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
   .storage-hint { margin: .35rem 0; opacity: .7; }
   .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }

@@ -62,6 +62,8 @@ a { color: inherit; }
 .shell::before { content: ''; position: absolute; z-index: 1; inset: 0; background: var(--dialog-color); pointer-events: none; transition: box-shadow 300ms ease; }
 .shell.picker-open::before { box-shadow: -2px 0 18px #0003; }
 .practice-scroll, .shell > .remaining-line { position: relative; z-index: 2; }
+.storage-connection { position: absolute; z-index: 3; top: 0; left: 0; right: 0; padding: 1rem 1.5rem; background: var(--dialog-color); font-size: .78rem; max-height: 40vh; overflow: auto; }
+.storage-actions { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .shell { --picker-visible-width: min(100vw, 40vh); }
 .shell.picker-open { margin-left: var(--picker-visible-width); }
 @media (min-aspect-ratio: 5/6) {
@@ -204,7 +206,8 @@ a { color: inherit; }
   text-decoration: none;
 }
 .text-action:hover:enabled { color: #345843; }
-.text-action:disabled { opacity: .35; cursor: default; }
+.text-action:disabled, .text-action[aria-disabled="true"], .text-action.write-notice { opacity: .35; cursor: default; }
+.text-action[aria-disabled="true"]:hover { color: #7b8375; }
 
 .primary-action:hover { background: #294a37; }
 .primary-action:active { background: #203d2c; }

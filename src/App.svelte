@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CardDialog from './components/CardDialog.svelte';
-  import OneDriveConnection from './components/OneDriveConnection.svelte';
-  import { localBackend, type DeckBackend } from './lib/deck-backend';
+  import { pickLocalFolder } from './lib/local-folder';
+  import { createReadOnlyFolderBackend, selectedFolderName } from './lib/local-folder-readonly';
+  import { type DeckBackend } from './lib/deck-backend';
   import Collection from './components/Collection.svelte';
   import Flashcard from './components/Flashcard.svelte';
   import Progress from './components/Progress.svelte';
@@ -25,7 +26,6 @@
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
   let addResizing = $state(false);
-  let restorePicker = false;
   const preview = import.meta.env.DEV ? new URLSearchParams(window.location.search).get('preview') : null;
   const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
     ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
@@ -33,15 +33,11 @@
   const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit');
 
   function openCardPanel(action: 'add' | 'edit') {
-    restorePicker = pickerOpen && window.matchMedia('(min-aspect-ratio: 5/6)').matches;
-    oneDriveConnection.closePicker(false);
     dialogAction = action;
   }
 
   function closeCardPanel() {
     dialogAction = null;
-    if (restorePicker && window.matchMedia('(min-aspect-ratio: 5/6)').matches) void oneDriveConnection.openPicker();
-    restorePicker = false;
   }
 
   function updateViewport() { viewportWidth = window.innerWidth; viewportHeight = window.innerHeight; }
@@ -49,14 +45,38 @@
     addWidth = Math.min(75, Math.max(viewportHeight * .4 / viewportWidth * 100, (viewportWidth - clientX) / viewportWidth * 100));
   }
 
-  function updatePickerWidth(width: number) {
-    pickerWidth = width;
-    localStorage.setItem('onedrive-picker-width', String(width));
+  let backend = $state<DeckBackend | undefined>();
+  let readOnly = $state(false);
+  let folderName = $state('');
+  let writeNotice = $state(false);
+  let writeNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+  let folderInput: HTMLInputElement;
+
+  function showWriteNotice() {
+    writeNotice = true;
+    clearTimeout(writeNoticeTimer);
+    writeNoticeTimer = setTimeout(() => { writeNotice = false; }, 3000);
   }
-  let activeStorage = $state<'local' | 'onedrive'>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
-  let backend = $state<DeckBackend | undefined>(import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
+
+  function setBackend(next: DeckBackend, readonly: boolean, name: string) {
+    backend = next;
+    readOnly = readonly;
+    folderName = name;
+    writeNotice = false;
+    clearTimeout(writeNoticeTimer);
+    networkError = '';
+    deck = { cards: [], files: [], errors: [], revisions: {} };
+    session = startSession([]);
+    selectedSource = '';
+    mountLoader();
+  }
+
+  function selectReadOnlyFolder() {
+    const files = folderInput.files;
+    if (files?.length) setBackend(createReadOnlyFolderBackend(files), true, selectedFolderName(files));
+    folderInput.value = '';
+  }
   let loader: ReturnType<typeof createDeckLoader> | undefined;
-  let oneDriveConnection: ReturnType<typeof OneDriveConnection>;
   const { order, index, revealed } = $derived(session);
   const current = $derived(order[index]);
   const blocked = $derived(deck.errors.length > 0 || !!networkError);
@@ -99,17 +119,23 @@
     void loader.refresh();
   }
 
-  function switchBackend(next: DeckBackend | null) {
-    backend = next ?? (import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? undefined : localBackend);
-    activeStorage = next ? 'onedrive' : (import.meta.env.VITE_DEFAULT_STORAGE === 'onedrive' ? 'onedrive' : 'local');
-    deck = { cards: [], files: [], errors: [], revisions: {} };
-    session = startSession([]);
-    selectedSource = '';
-    networkError = '';
-    mountLoader();
+  async function connectLocal() {
+    try {
+      if (!('showDirectoryPicker' in window)) {
+        folderInput.click();
+        return;
+      }
+      const selected = await pickLocalFolder();
+      setBackend(selected.backend, false, selected.name);
+    } catch (error) {
+      if (error instanceof DeckRequestError && error.cause instanceof DOMException && error.cause.name === 'AbortError') return;
+      if (!(error instanceof DeckRequestError)) throw error;
+      networkError = error.message;
+    }
   }
 
   function refresh() {
+    if (readOnly) { folderInput.click(); return; }
     if (!loader) throw new Error('Cannot refresh before deck loader is mounted.');
     return loader.refresh();
   }
@@ -142,21 +168,31 @@
     } else {
       mountLoader();
     }
-    return () => loader?.close();
+    return () => { loader?.close(); clearTimeout(writeNoticeTimer); };
   });
 </script>
 
 <svelte:window onkeydown={handleKey} onresize={updateViewport} />
 
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
-  <OneDriveConnection bind:this={oneDriveConnection} onBackend={switchBackend} onBusy={value => { storageBusy = value; }} onPickerChange={value => { pickerOpen = value; }} {pickerWidth} onPickerWidth={updatePickerWidth} onPickerResizing={value => { pickerResizing = value; }} active={activeStorage} canSwitch={!dialogAction} />
+  <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
+  <aside class="storage-connection" aria-label="Card storage">
+    <div class="storage-actions">
+      {#if backend}
+        <button class="text-action">Local</button>
+        <button class="text-action" disabled={loading || !!dialogAction} onclick={connectLocal}>{folderName}</button>
+      {:else}
+        <button class="text-action" disabled={loading || !!dialogAction} onclick={connectLocal}>Choose local folder</button>
+      {/if}
+    </div>
+  </aside>
   <div class="practice-scroll">
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
         {#if blocked}
           {#if networkError}
             <section class="empty-prompt connection-error" role="alert">
-              <p>Connection Error.<br />{#if networkError === loadTimeoutMessage}{networkError.slice(0, -6)}<button disabled={loading || storageBusy} onclick={refresh}>retry</button>.{:else}{networkError} <button disabled={loading || storageBusy} onclick={refresh}>Retry</button>.{/if}</p>
+              <p>Connection Error.<br />{#if networkError === loadTimeoutMessage}{networkError.slice(0, -6)}<button disabled={loading || storageBusy} onclick={backend ? refresh : connectLocal}>retry</button>.{:else}{networkError} <button disabled={loading || storageBusy} onclick={backend ? refresh : connectLocal}>Retry</button>.{/if}</p>
             </section>
           {/if}
           {#if deck.errors.length > 0}
@@ -174,7 +210,7 @@
             {#if storageBusy}
               <p role="status">Connecting…</p>
             {:else}
-              <p><button disabled={!import.meta.env.VITE_ONEDRIVE_CLIENT_ID} onclick={() => oneDriveConnection.startConnection()}>Connect your cloud storage</button> to start practicing your notes.</p>
+              <p><button onclick={connectLocal}>Choose a local folder</button> to start practicing your notes.</p>
             {/if}
           </section>
         {:else if current}
@@ -193,10 +229,14 @@
         <Collection files={deck.files} total={deck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
-          <button class="text-action" disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => openCardPanel('add')}>Add</button>
-          <button class="text-action" disabled={loading || storageBusy || blocked || !current || !!dialogAction} onclick={() => { dialogAction = 'remove'; }}>Remove</button>
-          <button class="text-action" disabled={loading || storageBusy || blocked || !current || !!dialogAction} onclick={() => openCardPanel('edit')}>Edit</button>
-          <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
+          {#if writeNotice}
+            <span class="text-action write-notice" role="status">Your browser does not support write to local storage</span>
+          {:else}
+            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
+            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => { if (readOnly) showWriteNotice(); else dialogAction = 'remove'; }}>Remove</button>
+            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
+            <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
+          {/if}
         </nav>
       </footer>
     </div>
@@ -204,7 +244,7 @@
 
   {#if dialogAction}
     <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
-      onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={activeStorage === 'onedrive'} onClose={closeCardPanel} />
+      onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={closeCardPanel} />
   {/if}
 
   {#if showProgress}
