@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CardDialog from './components/CardDialog.svelte';
+  import OneDriveConnection from './components/OneDriveConnection.svelte';
+  import { fade } from 'svelte/transition';
   import { pickLocalFolder } from './lib/local-folder';
   import { createReadOnlyFolderBackend, selectedFolderName } from './lib/local-folder-readonly';
   import { type DeckBackend } from './lib/deck-backend';
@@ -15,10 +17,13 @@
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
   let selectedSource = $state('');
-  let networkError = $state('');
+  let failure = $state<{ message: string; source: 'local-picker' | 'deck' } | null>(null);
+  const networkError = $derived(failure?.message ?? '');
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
-  let storageBusy = $state(false);
+  let storageActivity = $state<'connecting' | 'working' | null>(null);
+  const storageBusy = $derived(storageActivity !== null);
+  const switchingOneDrive = $derived(storageActivity === 'connecting');
   let pickerOpen = $state(false);
   let pickerWidth = $state(0);
   let pickerResizing = $state(false);
@@ -48,6 +53,13 @@
   let backend = $state<DeckBackend | undefined>();
   let readOnly = $state(false);
   let folderName = $state('');
+  let provider = $state<'local' | 'onedrive' | null>(null);
+  let choosingStorage = $state(false);
+  let switchOpen = $state(false);
+  let switchTimer: ReturnType<typeof setTimeout> | undefined;
+  let storageHeader = $state<HTMLElement>();
+  let pointerInStorage = false;
+  let oneDrive: OneDriveConnection;
   let writeNotice = $state(false);
   let writeNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let folderInput: HTMLInputElement;
@@ -58,13 +70,17 @@
     writeNoticeTimer = setTimeout(() => { writeNotice = false; }, 3000);
   }
 
-  function setBackend(next: DeckBackend, readonly: boolean, name: string) {
+  function setBackend(next: DeckBackend, readonly: boolean, name: string, source: 'local' | 'onedrive') {
+    if (source === 'local') oneDrive.clearActionError();
+    provider = source;
+    choosingStorage = false;
+    switchOpen = false;
     backend = next;
     readOnly = readonly;
     folderName = name;
     writeNotice = false;
     clearTimeout(writeNoticeTimer);
-    networkError = '';
+    failure = null;
     deck = { cards: [], files: [], errors: [], revisions: {} };
     session = startSession([]);
     selectedSource = '';
@@ -73,7 +89,7 @@
 
   function selectReadOnlyFolder() {
     const files = folderInput.files;
-    if (files?.length) setBackend(createReadOnlyFolderBackend(files), true, selectedFolderName(files));
+    if (files?.length) setBackend(createReadOnlyFolderBackend(files), true, selectedFolderName(files), 'local');
     folderInput.value = '';
   }
   let loader: ReturnType<typeof createDeckLoader> | undefined;
@@ -82,7 +98,7 @@
   const blocked = $derived(deck.errors.length > 0 || !!networkError);
   const available = $derived(filterCards(deck.cards, selectedSource));
   const remaining = $derived(order.length - index - (revealed ? 1 : 0));
-  const showProgress = $derived(order.length > 0 && !blocked);
+  const showProgress = $derived(order.length > 0 && !blocked && !switchingOneDrive);
 
   function startRound() { session = startSession(available); }
   function performAction() { if (!blocked) session = advancePractice(session); }
@@ -113,7 +129,7 @@
     if (!load) { loading = false; loader = undefined; return; }
     loader = createDeckLoader({
       onDeck: applyDeck,
-      onError: message => { networkError = message; },
+      onError: message => { if (message) failure = { message, source: 'deck' }; else if (failure?.source === 'deck') failure = null; },
       onLoading: value => { loading = value; },
     }, load);
     void loader.refresh();
@@ -126,12 +142,28 @@
         return;
       }
       const selected = await pickLocalFolder();
-      setBackend(selected.backend, false, selected.name);
+      setBackend(selected.backend, false, selected.name, 'local');
     } catch (error) {
       if (error instanceof DeckRequestError && error.cause instanceof DOMException && error.cause.name === 'AbortError') return;
       if (!(error instanceof DeckRequestError)) throw error;
-      networkError = error.message;
+      failure = { message: error.message, source: 'local-picker' };
     }
+  }
+
+  function chooseStorage(source: 'local' | 'onedrive') {
+    switchOpen = false;
+    clearTimeout(switchTimer);
+    if (source === 'local') { oneDrive.closePicker(false); void connectLocal(); }
+    else void oneDrive.startConnection();
+  }
+
+  function scheduleSwitchClose() {
+    clearTimeout(switchTimer);
+    switchTimer = setTimeout(() => { switchOpen = false; }, 1800);
+  }
+
+  function dismissSwitch(event: PointerEvent) {
+    if (switchOpen && !storageHeader?.contains(event.target as Node)) switchOpen = false;
   }
 
   function refresh() {
@@ -141,9 +173,10 @@
   }
 
   function handleKey(event: KeyboardEvent) {
+    if (event.key === 'Escape' && switchOpen) { switchOpen = false; return; }
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (dialogAction || event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea') || blocked || !current) return;
+    if (switchingOneDrive || dialogAction || event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea') || blocked || !current) return;
     if (event.code === 'Space') { event.preventDefault(); performAction(); }
     if (event.key === 'ArrowRight') move(1);
     if (event.key === 'ArrowLeft') showPrevious();
@@ -168,31 +201,47 @@
     } else {
       mountLoader();
     }
-    return () => { loader?.close(); clearTimeout(writeNoticeTimer); };
+    return () => { loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); };
   });
 </script>
 
-<svelte:window onkeydown={handleKey} onresize={updateViewport} />
+<svelte:window onkeydown={handleKey} onresize={updateViewport} onpointerdown={dismissSwitch} />
 
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
-  <aside class="storage-connection" aria-label="Card storage">
-    <div class="storage-actions">
-      {#if backend}
-        <button class="text-action">Local</button>
-        <button class="text-action" disabled={loading || !!dialogAction} onclick={connectLocal}>{folderName}</button>
+  <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
+    onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
+    onActivity={value => { storageActivity = value; }} onPickerChange={value => { pickerOpen = value; }}
+    {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width', String(value)); }}
+    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !dialogAction} />
+  {#if backend}
+    <aside class="storage-connection" aria-label="Card storage">
+      <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
+      {#if switchOpen}
+        <div class="storage-actions storage-switch" transition:fade={{ duration: 150 }}>
+          <span class="text-action">Switch storage to:</span>
+          <button class="text-action" onclick={() => chooseStorage('local')}>Local</button>
+          <button class="text-action" onclick={() => chooseStorage('onedrive')}>OneDrive</button>
+        </div>
       {:else}
-        <button class="text-action" disabled={loading || !!dialogAction} onclick={connectLocal}>Choose local folder</button>
+        <div class="storage-actions" transition:fade={{ duration: 150 }}>
+          <button class="text-action" disabled={loading || storageBusy || !!dialogAction} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
+          <button class="text-action" disabled={loading || storageBusy || !!dialogAction} onclick={() => provider === 'local' ? connectLocal() : oneDrive.openPicker()}>{folderName}</button>
+        </div>
       {/if}
-    </div>
-  </aside>
+      </div>
+    </aside>
+  {/if}
   <div class="practice-scroll">
     <div class="practice-page">
-      <main class="practice" aria-label="Flashcard practice" aria-busy={loading}>
-        {#if blocked}
+      <main class="practice" aria-label="Flashcard practice" aria-busy={loading || switchingOneDrive}>
+        {#if switchingOneDrive}
+          <section class="empty-prompt"><p role="status">Loading…</p></section>
+        {:else if blocked}
+          <div class="practice-errors">
           {#if networkError}
             <section class="empty-prompt connection-error" role="alert">
-              <p>Connection Error.<br />{#if networkError === loadTimeoutMessage}{networkError.slice(0, -6)}<button disabled={loading || storageBusy} onclick={backend ? refresh : connectLocal}>retry</button>.{:else}{networkError} <button disabled={loading || storageBusy} onclick={backend ? refresh : connectLocal}>Retry</button>.{/if}</p>
+              <p>Connection Error.<br />{#if networkError === loadTimeoutMessage}{networkError.slice(0, -6)}<button disabled={loading || storageBusy} onclick={failure?.source === 'local-picker' ? connectLocal : refresh}>retry</button>.{:else}{networkError} <button disabled={loading || storageBusy} onclick={failure?.source === 'local-picker' ? connectLocal : refresh}>Retry</button>.{/if}</p>
             </section>
           {/if}
           {#if deck.errors.length > 0}
@@ -203,6 +252,7 @@
               </div>
             </section>
           {/if}
+          </div>
         {:else if loading}
           <section class="empty-prompt"><p role="status">Loading…</p></section>
         {:else if !backend}
@@ -210,7 +260,10 @@
             {#if storageBusy}
               <p role="status">Connecting…</p>
             {:else}
-              <p><button onclick={connectLocal}>Choose a local folder</button> to start practicing your notes.</p>
+              <div class="welcome-choices">
+                <p class:welcome-hidden={choosingStorage} inert={choosingStorage} aria-hidden={choosingStorage}><button onclick={() => { choosingStorage = true; }}>Connect a storage</button> to start practicing your notes.</p>
+                <p class:welcome-hidden={!choosingStorage} inert={!choosingStorage} aria-hidden={!choosingStorage}><button onclick={() => chooseStorage('local')}>Local</button><br />or<br /><button onclick={() => chooseStorage('onedrive')}>OneDrive</button></p>
+              </div>
             {/if}
           </section>
         {:else if current}
@@ -230,12 +283,14 @@
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
           {#if writeNotice}
-            <span class="text-action write-notice" role="status">Your browser does not support write to local storage</span>
+            <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>Your browser does not support write to local storage</span>
           {:else}
+            <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => { if (readOnly) showWriteNotice(); else dialogAction = 'remove'; }}>Remove</button>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
             <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
+            </div>
           {/if}
         </nav>
       </footer>

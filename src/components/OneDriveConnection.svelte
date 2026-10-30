@@ -8,8 +8,8 @@
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
 
-  let { onBackend, onBusy, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
-    onBackend: (backend: DeckBackend | null) => void; onBusy: (busy: boolean) => void; onPickerChange: (open: boolean) => void;
+  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
+    onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
     pickerWidth: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
     active?: 'local' | 'onedrive'; canSwitch?: boolean;
   } = $props();
@@ -118,16 +118,16 @@
     readyTimer = setTimeout(() => pickerFailure(id, new DeckRequestError('The OneDrive folder picker did not respond. Please try refreshing it.')), 30000);
   }
 
-  async function run(operation: () => Promise<void>) {
+  async function run(operation: () => Promise<void>, activity: 'connecting' | 'working' = 'working') {
     if (busy) return;
     busy = true;
-    onBusy(true);
+    onActivity(activity);
     actionError = '';
     try { await operation(); }
     catch (failure) {
       if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
       actionError = failure.message;
-    } finally { busy = false; onBusy(false); }
+    } finally { busy = false; onActivity(null); }
   }
 
   function requireConnection(): FolderConnection {
@@ -140,7 +140,7 @@
     selected = next;
     if (changed) {
       recoveryOpen = false;
-      onBackend(next.backend);
+      onBackend(next.backend, next.folder.name);
     }
   }
 
@@ -189,14 +189,14 @@
     if (!pickerOpen) throw new DeckRequestError('Open the folder picker before selecting a folder.');
     if (!graph) throw new Error('OneDrive client has not been connected.');
     busy = true;
-    onBusy(true);
+    onActivity('working');
     try {
       const item = await graph.getItem(folder.id);
       const driveId = item.parentReference?.driveId;
       if (!driveId || driveId.toLowerCase() !== folder.driveId.toLowerCase()) throw new DeckRequestError('The picker and app must use the same OneDrive account. Reconnect and sign in with the same account.');
       if (!item.folder) throw new DeckRequestError('The selected item is not a folder in the connected OneDrive.');
       await selectFolder(item);
-    } finally { busy = false; onBusy(false); }
+    } finally { busy = false; onActivity(null); }
   }
 
   async function preparePicker() {
@@ -225,9 +225,13 @@
     void preparePicker();
   }
 
-  export function startConnection() {
-    void run(connect);
+  export async function startConnection() {
+    if (!clientId) { actionError = "OneDrive isn’t configured for this site."; return; }
+    if (selected) { actionError = ''; onBackend(selected.backend, selected.folder.name); return; }
+    await run(connect, 'connecting');
   }
+
+  export function clearActionError() { actionError = ''; }
 
   async function clearReviewed() {
     if (!window.confirm('Keep the files currently in OneDrive and clear this pending save? Check the source and removed.md first. This does not undo or repeat any file change.')) return;
@@ -240,30 +244,20 @@
     void run(async () => {
       auth = createOneDriveAuth({ clientId, redirectUri: new URL(import.meta.env.BASE_URL, location.origin).href });
       const returned = await auth!.completeSignIn();
-      if (returned || auth!.isConnected()) await connect();
+      if (returned) await connect();
     });
     return () => { destroyed = true; cancelPickerRefresh(); clearReadyTimer(); for (const instance of pickers.values()) instance.dispose(); };
   });
 </script>
 
-<aside class="storage-connection" aria-label="Card storage">
-  <div class="storage-actions">
-    {#if active === 'onedrive' && folder}
-      <button class="text-action">OneDrive</button>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>{folder.name}</button>
-    {:else}
-      {#if import.meta.env.VITE_DEFAULT_STORAGE !== 'onedrive'}<span>Local notes</span>{/if}
-      <button class="text-action" disabled={busy || !canSwitch || !clientId} onclick={startConnection}>Connect OneDrive</button>
-    {/if}
-  </div>
-  {#if !clientId}<p class="storage-hint">OneDrive isn’t configured for this site.</p>{/if}
-  {#if actionError || recoveryError}
+<aside class="storage-connection onedrive-status" aria-label="OneDrive status" class:has-status={!!actionError || (active === 'onedrive' && (!!recoveryError || !!recovery))}>
+  {#if actionError || (active === 'onedrive' && recoveryError)}
     {#if actionError}<p role="alert" class="save-error">{actionError}</p>{/if}
-    {#if recoveryError}<p role="alert" class="save-error">{recoveryError}</p>{/if}
+    {#if active === 'onedrive' && recoveryError}<p role="alert" class="save-error">{recoveryError}</p>{/if}
     {#if auth}<button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>{/if}
     {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>{/if}
   {/if}
-  {#if recovery}
+  {#if recovery && active === 'onedrive'}
     <section class="pending-save" aria-label="Pending OneDrive save">
       <p role="status">A pending {recovery.action} in {recovery.source} needs review. Further saves are paused.</p>
       <button class="text-action" disabled={busy || !canSwitch} onclick={() => { recoveryOpen = !recoveryOpen; }}>Review pending save</button>
@@ -280,7 +274,8 @@
 </aside>
 
 <style>
-  .storage-hint { margin: .35rem 0; opacity: .7; }
+  .onedrive-status:not(.has-status) { display: none; }
+  .onedrive-status.has-status { top: 3rem; right: auto; }
   .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
 

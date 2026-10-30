@@ -63,6 +63,9 @@ a { color: inherit; }
 .shell.picker-open::before { box-shadow: -2px 0 18px #0003; }
 .practice-scroll, .shell > .remaining-line { position: relative; z-index: 2; }
 .storage-connection { position: absolute; z-index: 3; top: 0; left: 0; right: 0; padding: 1rem 1.5rem; background: var(--dialog-color); font-size: .78rem; max-height: 40vh; overflow: auto; }
+.storage-stack { display: inline-grid; max-width: 100%; }
+.storage-stack > .storage-actions { grid-area: 1 / 1; }
+.storage-switch button.text-action { text-decoration: underline; }
 .storage-actions { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .shell { --picker-visible-width: min(100vw, 40vh); }
 .shell.picker-open { margin-left: var(--picker-visible-width); }
@@ -307,6 +310,8 @@ a { color: inherit; }
 }
 .collection-count { white-space: nowrap; }
 
+.practice-errors { width: min(100%, 760px); display: grid; gap: 20px; }
+
 .notice {
   width: max-content;
   max-width: min(100%, 760px);
@@ -332,6 +337,9 @@ a { color: inherit; }
   text-wrap: pretty;
 }
 .empty-prompt p { margin: 0; }
+.welcome-choices { display: grid; }
+.welcome-choices > p { grid-area: 1 / 1; align-self: center; opacity: 1; transition: opacity 150ms ease 150ms; }
+.welcome-choices > p.welcome-hidden { opacity: 0; pointer-events: none; transition-delay: 0ms; }
 .empty-prompt button {
   padding: 0;
   border: 0;
@@ -368,7 +376,9 @@ a { color: inherit; }
   *, *::before, *::after { transition: none !important; }
 }
 
-.card-actions { display: flex; gap: 20px; }
+.card-actions { display: grid; }
+.card-actions > * { grid-area: 1 / 1; justify-self: end; }
+.card-action-buttons { display: flex; gap: 20px; }
 .card-actions .text-action { font-size: inherit; }
 dialog {
   width: min(640px, calc(100% - 32px)); max-height: calc(100svh - 40px);
