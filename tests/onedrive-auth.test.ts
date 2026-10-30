@@ -201,3 +201,12 @@ test('picker obtains its token from the connected session without another redire
   assert.equal(await s.auth.getPickerToken(), 'picker');
   assert.equal(s.calls.length, 2);
 });
+
+test('automatic sign-in lets Microsoft reuse its existing login session', async () => {
+  const s = setup();
+  await s.auth.startAutomaticSignIn();
+  const params = new URL(s.navigate()).searchParams;
+  assert.equal(params.has('prompt'), false);
+  assert.ok(params.get('state'));
+  assert.equal(params.get('code_challenge_method'), 'S256');
+});

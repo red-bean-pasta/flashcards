@@ -3,7 +3,9 @@
   import CardDialog from './components/CardDialog.svelte';
   import OneDriveConnection from './components/OneDriveConnection.svelte';
   import { fade } from 'svelte/transition';
-  import { pickLocalFolder } from './lib/local-folder';
+  import { pickLocalFolder, createLocalFolderBackend, type AccessibleDirectory } from './lib/local-folder';
+  import { lastProvider, rememberProvider, rememberLocalFolder } from './lib/storage-memory';
+  import { inspectSavedFolder } from './lib/local-folder-restore';
   import { createReadOnlyFolderBackend, readOnlyFolderMessage, selectedFolderName } from './lib/local-folder-readonly';
   import { type DeckBackend } from './lib/deck-backend';
   import Collection from './components/Collection.svelte';
@@ -21,7 +23,7 @@
   const networkError = $derived(failure?.message ?? '');
   let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
   let loading = $state(true);
-  let storageActivity = $state<'connecting' | 'working' | null>(null);
+  let storageActivity = $state<'connecting' | 'working' | null>(lastProvider() === 'onedrive' || new URLSearchParams(window.location.search).has('code') || new URLSearchParams(window.location.search).has('error') ? 'connecting' : null);
   const storageBusy = $derived(storageActivity !== null);
   const switchingOneDrive = $derived(storageActivity === 'connecting');
   let pickerOpen = $state(false);
@@ -63,6 +65,8 @@
   let writeNotice = $state(false);
   let writeNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let folderInput: HTMLInputElement;
+  let rememberedFolder = $state<AccessibleDirectory>();
+  let restoreAttempt = 0;
 
   function showWriteNotice() {
     writeNotice = true;
@@ -72,6 +76,8 @@
 
   function setBackend(next: DeckBackend, readonly: boolean, name: string, source: 'local' | 'onedrive') {
     if (source === 'local') oneDrive.clearActionError();
+    restoreAttempt++;
+    rememberProvider(source);
     provider = source;
     choosingStorage = false;
     switchOpen = false;
@@ -143,6 +149,11 @@
       }
       const selected = await pickLocalFolder();
       setBackend(selected.backend, false, selected.name, 'local');
+      try { await rememberLocalFolder(selected.handle); }
+      catch (error) {
+        if (!(error instanceof DOMException)) throw error;
+        failure = { message: `Could not remember the local folder: ${error.message}`, source: 'local-picker' };
+      }
     } catch (error) {
       if (error instanceof DeckRequestError && error.cause instanceof DOMException && error.cause.name === 'AbortError') return;
       if (!(error instanceof DeckRequestError)) throw error;
@@ -150,7 +161,41 @@
     }
   }
 
+
+  function activateLocalFolder(handle: AccessibleDirectory) {
+    setBackend(createLocalFolderBackend(handle), false, handle.name, 'local');
+  }
+
+  async function restoreLocal() {
+    const attempt = ++restoreAttempt;
+    try {
+      const saved = await inspectSavedFolder();
+      if (attempt !== restoreAttempt || !saved) return;
+      const { folder: handle, permission } = saved;
+      if (permission === 'granted') activateLocalFolder(handle);
+      else rememberedFolder = handle;
+    } catch (error) {
+      if (attempt !== restoreAttempt) return;
+      if (!(error instanceof DOMException)) throw error;
+      failure = { message: `Could not restore the local folder: ${error.message}`, source: 'local-picker' };
+    }
+  }
+  async function reconnectLocal() {
+    if (!rememberedFolder) return;
+    const handle = rememberedFolder;
+    try {
+      const permission = await handle.requestPermission({ mode: 'readwrite' });
+      if (permission === 'granted') { rememberedFolder = undefined; activateLocalFolder(handle); }
+      else choosingStorage = true;
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+      failure = { message: `Could not reconnect the local folder: ${error.message}`, source: 'local-picker' };
+    }
+  }
+
   function chooseStorage(source: 'local' | 'onedrive') {
+    restoreAttempt++;
+    rememberedFolder = undefined;
     switchOpen = false;
     clearTimeout(switchTimer);
     if (source === 'local') { oneDrive.closePicker(false); void connectLocal(); }
@@ -189,6 +234,7 @@
   }
 
   onMount(() => {
+    if (lastProvider() === 'local') { choosingStorage = true; if ('showDirectoryPicker' in window) void restoreLocal(); }
     pickerWidth = defaultPanelWidth('--file-selector-default-width-ratio');
     addWidth = defaultPanelWidth('--card-panel-default-width-ratio');
     updateViewport();
@@ -236,7 +282,7 @@
     <div class="practice-page">
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading || switchingOneDrive}>
         {#if switchingOneDrive}
-          <section class="empty-prompt"><p role="status">Loading…</p></section>
+          <section class="empty-prompt"><p role="status">Connecting…</p></section>
         {:else if blocked}
           <div class="practice-errors">
           {#if networkError}
@@ -262,7 +308,7 @@
             {:else}
               <div class="welcome-choices">
                 <p class:welcome-hidden={choosingStorage} inert={choosingStorage} aria-hidden={choosingStorage}><button onclick={() => { choosingStorage = true; }}>Connect a storage</button> to start practicing your notes.</p>
-                <p class:welcome-hidden={!choosingStorage} inert={!choosingStorage} aria-hidden={!choosingStorage}><button onclick={() => chooseStorage('local')}>Local</button><br />or<br /><button onclick={() => chooseStorage('onedrive')}>OneDrive</button></p>
+                <p class:welcome-hidden={!choosingStorage} inert={!choosingStorage} aria-hidden={!choosingStorage}>{#if rememberedFolder}<button onclick={reconnectLocal}>Reconnect {rememberedFolder.name}</button><br />or<br />{/if}<button onclick={() => chooseStorage('local')}>Local</button><br />or<br /><button onclick={() => chooseStorage('onedrive')}>OneDrive</button></p>
               </div>
             {/if}
           </section>

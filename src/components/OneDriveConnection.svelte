@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { lastProvider } from '../lib/storage-memory';
   import { createOneDrivePicker } from '../lib/onedrive/picker';
   import { createOneDriveAuth, OneDriveAuthError, type OneDriveAuth } from '../lib/onedrive/auth';
   import { createGraphClient, GraphError, type GraphClient, type GraphItem } from '../lib/onedrive/graph';
@@ -24,6 +25,7 @@
   const recoveryError = $derived(selected?.recoveryError ?? '');
   let busy = $state(false);
   let actionError = $state('');
+  let redirecting = false;
   let recoveryOpen = $state(false);
   let pickerOpen = $state(false);
   type PickerSlot = { id: number; frame?: HTMLIFrameElement };
@@ -134,7 +136,7 @@
     catch (failure) {
       if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
       actionError = failure.message;
-    } finally { busy = false; onActivity(null); }
+    } finally { busy = false; if (!redirecting) onActivity(null); }
   }
 
   function requireConnection(): FolderConnection {
@@ -227,7 +229,7 @@
     if (!auth || !clientId) throw new Error('OneDrive authentication was not initialized.');
     if (!auth.isConnected()) { await auth.startSignIn(); return; }
     graph = createGraphClient(() => auth!.getAccessToken());
-    connection = createFolderConnection(graph, createFolderMemory(clientId, () => sessionStorage), applySelection);
+    connection = createFolderConnection(graph, createFolderMemory(clientId, () => localStorage), applySelection);
     await connection.restore();
     void preparePicker();
   }
@@ -247,12 +249,22 @@
   }
 
   onMount(() => {
-    if (!clientId) return;
+    if (!clientId) { onActivity(null); return; }
+    const restoring = lastProvider() === 'onedrive' || new URLSearchParams(location.search).has('code') || new URLSearchParams(location.search).has('error');
     void run(async () => {
       auth = createOneDriveAuth({ clientId, redirectUri: new URL(import.meta.env.BASE_URL, location.origin).href });
       const returned = await auth!.completeSignIn();
-      if (returned) await connect();
-    });
+      if (returned) { sessionStorage.removeItem('flashcards.restore.attempted'); await connect(); }
+      else if (lastProvider() === 'onedrive') {
+        if (auth!.isConnected()) await connect();
+        else if (!sessionStorage.getItem('flashcards.restore.attempted')) {
+          sessionStorage.setItem('flashcards.restore.attempted', '1');
+          redirecting = true;
+          try { await auth!.startAutomaticSignIn(); }
+          catch (error) { redirecting = false; throw error; }
+        }
+      }
+    }, restoring ? 'connecting' : 'working');
     return () => { destroyed = true; cancelPickerRefresh(); clearReadyTimer(); for (const instance of pickers.values()) instance.dispose(); };
   });
 </script>

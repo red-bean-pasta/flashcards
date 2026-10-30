@@ -104,7 +104,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
   function assertCurrent(expected: number) {
     if (generation !== expected) throw new OneDriveAuthError('OneDrive was disconnected while authentication was in progress. Reconnect to continue.', 'reconnect_required');
   }
-  async function startSignIn(purpose?: 'picker'): Promise<void> {
+  async function startSignIn(purpose?: 'picker', automatic = false): Promise<void> {
     if (new URL(location.href).origin !== redirect.origin) throw new OneDriveAuthError('OneDrive redirect URI must use this app’s origin.', 'configuration');
     const expected = ++generation;
     const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -114,7 +114,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     saveStored('pending', { state, verifier, createdAt: now(), ...(purpose ? { purpose } : {}) });
     const url = new URL(`${AUTHORITY}/authorize`);
     url.search = new URLSearchParams({ client_id: config.clientId, response_type: 'code', redirect_uri: redirect.href,
-      response_mode: 'query', scope: purpose === 'picker' ? PICKER_SCOPES : CONNECTION_SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account' }).toString();
+      response_mode: 'query', scope: purpose === 'picker' ? PICKER_SCOPES : CONNECTION_SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', ...(automatic ? {} : { prompt: 'select_account' }) }).toString();
     location.assign(url.href);
   }
   async function fetchToken(parameters: Record<string, string>, oldRefreshToken?: string, scope = SCOPES): Promise<Tokens> {
@@ -236,7 +236,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     });
   }
   function isConnected(): boolean { return readStored('tokens', isTokens) !== undefined; }
-  return { startSignIn, startPickerSignIn: () => startSignIn('picker'), completeSignIn, getAccessToken, getPickerToken, hasPickerAuthorization, disconnect, isConnected };
+  return { startSignIn, startAutomaticSignIn: () => startSignIn(undefined, true), startPickerSignIn: () => startSignIn('picker'), completeSignIn, getAccessToken, getPickerToken, hasPickerAuthorization, disconnect, isConnected };
 }
 
 export type OneDriveAuth = ReturnType<typeof createOneDriveAuth>;

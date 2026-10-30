@@ -7,7 +7,7 @@ import { captureOperation, createOperationProjector, planContent } from './onedr
 import type { DeckBackend } from './deck-backend.js';
 import type { DeckState, MutationRequest } from './types.js';
 
-type Directory = FileSystemDirectoryHandle & { values(): AsyncIterableIterator<FileSystemHandle> };
+export type Directory = FileSystemDirectoryHandle & { values(): AsyncIterableIterator<FileSystemHandle> };
 
 function report(error: unknown): never {
   if (error instanceof DOMException || error instanceof CardParseError || error instanceof CardInputError) {
@@ -15,6 +15,8 @@ function report(error: unknown): never {
   }
   throw error;
 }
+
+export type AccessibleDirectory = Directory & { queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>; requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState> };
 
 export function createLocalFolderBackend(root: Directory, parse = parseBrowserCards): DeckBackend {
   const sources = new Map<string, FileSystemFileHandle>();
@@ -92,12 +94,12 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
   return { load, mutate };
 }
 
-export async function pickLocalFolder(): Promise<{ backend: DeckBackend; name: string }> {
+export async function pickLocalFolder(): Promise<{ backend: DeckBackend; name: string; handle: Directory }> {
   const picker = (window as Window & { showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<Directory> }).showDirectoryPicker;
   if (!picker) throw new DeckRequestError('Direct folder access requires a supported Chromium browser. Firefox and Safari cannot save changes to a selected folder.');
   try {
     const folder = await picker.call(window, { mode: 'readwrite' });
-    return { backend: createLocalFolderBackend(folder), name: folder.name };
+    return { backend: createLocalFolderBackend(folder), name: folder.name, handle: folder };
   }
   catch (error) { report(error); }
 }
