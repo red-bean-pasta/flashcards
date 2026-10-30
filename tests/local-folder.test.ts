@@ -74,6 +74,33 @@ test('local removal resumes after the archive commits and its response is lost',
   assert.equal(await (await root.entries.get('notes.md').getFile()).text(), '');
 });
 
+test('local removal recognizes an absent source after an interrupted archive', async () => {
+  const root = directory('root');
+  const source = file('notes.md', entry);
+  root.entries.set('notes.md', source);
+  const archive = file('removed.md', '');
+  const originalWritable = archive.createWritable;
+  archive.createWritable = async () => {
+    const stream = await originalWritable();
+    return { ...stream, async close() { await stream.close(); throw new DOMException('Interrupted', 'NetworkError'); } };
+  };
+  root.entries.set('removed.md', archive);
+  let backend = createLocalFolderBackend(root as any, (text, name) => parseBrowserCards(text, name, value => value));
+  const deck = await backend.load();
+  const request = { action: 'remove' as const, source: 'notes.md', index: 0, revision: deck.revisions['notes.md'] };
+  const item: StoredMutation = { id: 'local-absent', createdAt: 1, destination: { provider: 'local', folder: root as any }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  let saved = item;
+  const checkpoint = async (value: StoredMutation) => { saved = { ...value }; };
+  await assert.rejects(backend.persistent!.execute(item, checkpoint), /Interrupted/);
+  const stream = await source.createWritable();
+  await stream.write(''); await stream.close();
+  source.createWritable = async () => { throw new Error('Unexpected source write'); };
+  backend = createLocalFolderBackend(root as any, (text, name) => parseBrowserCards(text, name, value => value));
+  await backend.load();
+  await backend.persistent!.execute(saved, checkpoint, true);
+  assert.equal(await (await source.getFile()).text(), '');
+});
+
 test('a reloaded local source write is not replayed while an earlier stream may still finish', async () => {
   const root = directory('root');
   root.entries.set('notes.md', file('notes.md', entry));
@@ -86,7 +113,7 @@ test('a reloaded local source write is not replayed while an earlier stream may 
   assert.equal(await (await root.entries.get('notes.md').getFile()).text(), entry);
 });
 
-test('local removal stops if the source changes after archival', async () => {
+test('local removal preserves external changes when the archived card is already absent', async () => {
   const root = directory('root');
   const source = file('notes.md', entry);
   const archive = file('removed.md', '');
@@ -106,7 +133,7 @@ test('local removal stops if the source changes after archival', async () => {
   const deck = await backend.load();
   const request = { action: 'remove' as const, source: 'notes.md', index: 0, revision: deck.revisions['notes.md'] };
   const item: StoredMutation = { id: 'local-change', createdAt: 1, destination: { provider: 'local', folder: root as any }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
-  await assert.rejects(backend.persistent.execute(item, async () => {}), /changed before saving/);
+  await backend.persistent.execute(item, async () => {});
   assert.equal(await (await source.getFile()).text(), entry.replace('One', 'External'));
   assert.equal(await (await archive.getFile()).text(), entry);
 });

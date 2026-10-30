@@ -4,6 +4,7 @@ import { createRecoveredProjector } from '../src/lib/mutation-projection.ts';
 import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { captureOperation } from '../src/lib/onedrive/operations.ts';
 import type { StoredMutation } from '../src/lib/mutation-storage.ts';
+import { startSession, advancePractice, updateSession } from '../src/lib/session.ts';
 const entry = (q: string) => `# question\n${q}\n\n# answer\nA\n\n`;
 const parse: typeof parseBrowserCards = (text, source) => parseBrowserCards(text, source, value => value);
 const project = createRecoveredProjector(parse);
@@ -31,4 +32,18 @@ test('recovered edit already visible in the loaded deck is not applied twice', (
   const result = project(loaded, item, { ...loaded, revisions: { 'cards.md': 'after' } }, 'source-writing');
   assert.deepEqual(result.cards.map(card => card.question), ['New']);
   assert.equal(result.cards[0].id, loaded.cards[0].id);
+});
+
+test('an in-place cross-tab addition preserves the current practice position', () => {
+  const cards = parse(entry('One') + entry('Two') + entry('Three'), 'cards.md');
+  const snapshot = { cards, files: ['cards.md'], errors: [], revisions: { 'cards.md': 'before' } };
+  const request = { action: 'add' as const, source: 'cards.md', revision: 'before', question: 'Added', answer: 'A' };
+  const item: StoredMutation = { id: 'id', createdAt: 1, destination: { provider: 'onedrive', driveId: 'd', folderId: 'f' }, request, operation: captureOperation(snapshot, request), snapshot, stage: 'releasing', attempts: 0 };
+  const session = advancePractice(advancePractice(startSession(cards)));
+  const current = session.order[session.index].id;
+  const updated = project(snapshot, item, { ...snapshot, revisions: { 'cards.md': 'after' } }, 'source-writing');
+  const next = updateSession(session, updated.cards);
+  assert.equal(next.index, session.index);
+  assert.equal(next.order[next.index].id, current);
+  assert.equal(next.order.length, 4);
 });

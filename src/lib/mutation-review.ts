@@ -33,6 +33,6 @@ export function reviewSource(operation: CardOperation, before: string, current: 
 /** Establish whether the prepared archive write completed. */
 export function reviewArchive(operation: CardOperation, before: string, after: string, current: string): SourceReview {
   if (operation.action !== 'remove' || !operation.original) throw new Error('Archive review requires a removal with an original pair.');
-  if (current === after) return 'satisfied';
+  if (current === after || count(current, 'removed.md', operation.original) > 0) return 'satisfied';
   return current === before ? 'safe-to-retry' : 'needs-review';
 }

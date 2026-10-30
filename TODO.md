@@ -1,0 +1,5 @@
+# TODO
+
+- [ ] Investigate the OneDrive folder picker timeout in the Codex embedded browser. During live testing, both tabs reported “The OneDrive folder picker did not respond” even though the remembered folder loaded and card writes succeeded. Determine whether the embedded browser prevents the picker from initializing, and ensure the message accurately describes any limitation without hiding a real picker failure. Verify folder selection and refresh in supported browsers.
+- [ ] Test pending mutations on a real mobile device when the browser is suspended and resumed, including a reload and a matching-folder reconnect. Confirm retry timing, recovery, and preservation of practice progress during in-place updates.
+- [ ] Exercise difficult recovery cases against a disposable live OneDrive folder: responses lost before and after a write, interruption between archive and source writes, and concurrent external edits. Current automated fixtures cover these paths, but live service behavior has not been verified for each case.

@@ -4,7 +4,7 @@ import { CardParseError } from './card-ranges.js';
 import { CardInputError } from './card-text.js';
 import { parseBrowserCards } from './browser-cards.js';
 import { DeckRequestError } from './deck-client.js';
-import { captureOperation, createOperationProjector, isUnchangedEdit, planContent } from './onedrive/operations.js';
+import { captureOperation, createOperationProjector, isUnchangedEdit, planContent, validateTargets } from './onedrive/operations.js';
 import type { DeckBackend } from './deck-backend.js';
 import type { DeckState, MutationRequest } from './types.js';
 import type { StoredMutation, MutationWritePlan } from './mutation-storage.js';
@@ -77,11 +77,16 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     const operation = item.operation;
     let handle = sources.get(operation.source);
     if (!handle) {
-      if (operation.action !== 'add' || !isNewSourceName(operation.source)) throw new DeckRequestError('The card file is no longer available. Refresh to review your notes.');
-      handle = await root.getFileHandle(operation.source, { create: true });
+      if (!isNewSourceName(operation.source)) throw new DeckRequestError('The card file is no longer available. Refresh to review your notes.');
+      try { handle = await root.getFileHandle(operation.source, { create: operation.action === 'add' }); }
+      catch (error) {
+        if (error instanceof DOMException && error.name === 'NotFoundError') throw new DeckRequestError('The card file is no longer available. Refresh to review your notes.', { cause: error });
+        throw error;
+      }
       sources.set(operation.source, handle);
     }
     const before = await (await handle.getFile()).text();
+    validateTargets(before, operation, item.snapshot);
     const change = planContent(before, operation);
     const source: MutationWritePlan = { id: operation.source, name: operation.source, before, after: change.text, revision: null };
     if (operation.action !== 'remove') return { source };
@@ -142,6 +147,13 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
         if (result === 'needs-review') throw new DeckRequestError('The save outcome is unclear. Review the current file before continuing.');
         if (result === 'safe-to-retry' && recovered) throw new DeckRequestError('The previous local write may still be finishing. Review the pending change.');
         await advance({ stage: result === 'satisfied' ? 'releasing' : 'source-ready' });
+      }
+      if (item.stage === 'source-ready' && item.operation.action === 'remove') {
+        const current = await localCurrent(source);
+        const archive = await localCurrent(item.archiveWrite!);
+        if (current !== null && reviewSource(item.operation, source.before ?? '', current, archive ?? '') === 'satisfied') {
+          await advance({ stage: 'releasing' });
+        }
       }
       if (item.stage === 'source-ready') {
         await advance({ stage: 'source-writing' });

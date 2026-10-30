@@ -58,6 +58,15 @@ export function planContent(text: string, operation: CardOperation): ContentChan
   return { text: next, removed: operation.action === 'remove' ? matches.map(range => text.slice(range.start, range.end)).join('') : '', matched: matches.length };
 }
 
+/** A queued edit or removal must still address the same number of matching cards. */
+export function validateTargets(text: string, operation: CardOperation, snapshot: DeckState): void {
+  if (operation.action === 'add') return;
+  if (!operation.original) throw new Error('Mutation requires an original pair.');
+  const expected = snapshot.cards.filter(card => card.source === operation.source && samePair(card, operation.original!)).length;
+  const actual = parseCardRanges(text, operation.source).filter(range => samePair(range.content, operation.original!)).length;
+  if (!expected || actual !== expected) throw new DeckRequestError('The matching cards changed before saving. Review the pending change.');
+}
+
 function parseReplacement(operation: Extract<CardOperation, { replacement: Pair }>, parse: typeof parseBrowserCards): Card {
   const cards = parse(formatEntry(operation.replacement.question, operation.replacement.answer, '\n'), operation.source);
   if (cards.length !== 1) {

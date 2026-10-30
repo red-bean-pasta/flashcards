@@ -34,11 +34,13 @@ test('remove requires the source to be absent and at least one archive match', (
   assert.equal(reviewSource(operation, before, before, ''), 'needs-review');
 });
 
-test('archive review requires the prepared bytes, even with an earlier matching entry', () => {
+test('archive review accepts any matching archived entry, including an older one', () => {
   const operation: CardOperation = { action: 'remove', source: 'cards.md', original: pair('Old') };
   const before = entry('Old');
   const after = before + entry('Old');
-  assert.equal(reviewArchive(operation, before, after, before), 'safe-to-retry');
+  assert.equal(reviewArchive(operation, before, after, before), 'satisfied');
   assert.equal(reviewArchive(operation, before, after, after), 'satisfied');
+  assert.equal(reviewArchive(operation, '', after, ''), 'safe-to-retry');
+  assert.equal(reviewArchive(operation, before, after, before + entry('Other')), 'satisfied');
   assert.equal(reviewArchive(operation, before, after, entry('Other')), 'needs-review');
 });

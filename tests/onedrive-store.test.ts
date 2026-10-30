@@ -141,6 +141,22 @@ test('add CAS conflict rereads latest source and preserves a concurrent external
   assert.equal(updated.cards[0], deck.cards[0]);
 });
 
+test('edit conflict does not change matching cards added by another editor', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Original'));
+  const store = f.store();
+  const deck = await store.load();
+  let raced = false;
+  f.hooks.before = write => {
+    if (write.name === 'deck.md' && !raced) {
+      raced = true;
+      f.put('root', 'deck.md', entry('Original') + entry('Original'));
+    }
+  };
+  await assert.rejects(store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'Changed', answer: 'Answer' }, deck), /matching cards changed/);
+  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Original'));
+});
+
 test('edit updates all source duplicates while preserving other files and snapshot-only membership', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Same') + entry('Other') + entry('Same'));
@@ -228,6 +244,26 @@ test('persistent removal resumes source after interrupted archive without anothe
   assert.equal(f.text('root', 'deck.md'), '');
   assert.equal(f.text('root', 'removed.md'), entry('Old'));
   assert.equal(f.committed.filter(write => write.name === 'removed.md').length, 1);
+});
+
+test('removal recognizes an already absent source after an interrupted archive', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  let store = f.store();
+  const deck = await store.load();
+  const request = { action: 'remove' as const, source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 };
+  const item: StoredMutation = { id: 'archive-lost-source-absent', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  let saved = structuredClone(item);
+  const checkpoint = async (value: StoredMutation) => { saved = structuredClone(value); };
+  f.hooks.after = write => { if (write.name === 'removed.md') throw new GraphError('response lost', { status: 0, code: 'networkError' }, true); };
+  await assert.rejects(store.execute(item, checkpoint), /response lost/);
+  f.hooks.after = undefined;
+  f.put('root', 'deck.md', '');
+  store = f.store();
+  await store.load();
+  await store.execute(saved, checkpoint);
+  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 0);
+  assert.equal(await store.pending(), null);
 });
 
 test('persistent add retries the same conditional write when the lost response preceded commit', async () => {

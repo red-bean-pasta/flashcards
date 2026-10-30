@@ -8,7 +8,7 @@ import type { DeckState, MutationRequest } from '../types.js';
 import { GraphError, type GraphClient, type GraphItem } from './graph.js';
 import { OneDriveAuthError } from './auth.js';
 import { createOperationJournal, type PendingOperation, type WritePlan } from './journal.js';
-import { captureOperation, planContent, createOperationProjector, isUnchangedEdit, type CardOperation } from './operations.js';
+import { captureOperation, planContent, createOperationProjector, isUnchangedEdit, validateTargets, type CardOperation } from './operations.js';
 import type { StoredMutation, MutationWritePlan } from '../mutation-storage.js';
 import { reviewArchive, reviewSource } from '../mutation-review.js';
 import { validateMutationPlan } from '../mutation-plan.js';
@@ -80,17 +80,18 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     }
   }
 
-  async function sourcePlan(operation: CardOperation): Promise<{ plan: WritePlan; removed: string }> {
+  async function sourcePlan(operation: CardOperation, snapshot: DeckState): Promise<{ plan: WritePlan; removed: string }> {
     let item = sources.get(operation.source);
     if (!item) {
-      if (operation.action !== 'add') throw new DeckRequestError('This card file is no longer available. Refresh to review your notes.');
       if (!isNewSourceName(operation.source)) throw new DeckRequestError('New filenames must use file_name.md without a folder path.');
       item = await graph.findChild(folder.id, operation.source) ?? undefined;
+      if (!item && operation.action !== 'add') throw new DeckRequestError('This card file is no longer available. Refresh to review your notes.');
       if (item && !item.file) throw new DeckRequestError('That name belongs to a folder. Choose another filename.');
       if (item) sources.set(operation.source, item);
     }
     if (item) await validateSourcePath(operation.source, item.id);
     const before = item ? await graph.readText(item.id) : null;
+    validateTargets(before?.text ?? '', operation, snapshot);
     const change = planContent(before?.text ?? '', operation);
     return { plan: { id: item?.id ?? null, name: operation.source, before: before?.text ?? null, revision: before?.revision ?? null, after: change.text }, removed: change.removed };
   }
@@ -179,7 +180,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     async function preparePlans() {
       if (!item.sourceWrite) {
         await advance({ stage: 'preparing' });
-        const source = await sourcePlan(item.operation);
+        const source = await sourcePlan(item.operation, item.snapshot);
         const archive = item.operation.action === 'remove' ? await archivePlan(source.removed) : undefined;
         await advance({ sourceWrite: source.plan, archiveWrite: archive, stage: archive ? 'archive-ready' : 'source-ready' });
       }
@@ -222,6 +223,13 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
 
     async function recoverAndPublishSource() {
       const source = item.sourceWrite!;
+      if (item.stage === 'source-ready' && item.operation.action === 'remove') {
+        const current = await currentPlan(source);
+        const archive = await currentPlan(item.archiveWrite!);
+        if (current && reviewSource(item.operation, source.before ?? '', current.text, archive?.text ?? '') === 'satisfied') {
+          await advance({ stage: 'releasing' });
+        }
+      }
       if (item.stage === 'source-writing') {
         const current = await currentPlan(source);
         const archive = item.archiveWrite ? await currentPlan(item.archiveWrite) : null;
@@ -240,7 +248,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
           try { await publish(plan); }
           catch (error) {
             if (!(error instanceof GraphError) || error.uncertain || ![409, 412].includes(error.status) || item.operation.action === 'remove' || attempt === 2) throw error;
-            const replacement = (await sourcePlan(item.operation)).plan;
+            const replacement = (await sourcePlan(item.operation, item.snapshot)).plan;
             pending = { ...pending, sourceWrite: replacement, stage: 'source-ready' };
             await journal.update(pending);
             await advance({ sourceWrite: replacement, stage: 'source-ready' });

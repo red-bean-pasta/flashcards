@@ -33,6 +33,21 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
   const fresh = new Set<string>();
   const projected = new Set<string>();
   let submission = Promise.resolve();
+  let incoming = Promise.resolve();
+  const received = new Set<string>();
+  const channel = typeof BroadcastChannel === 'undefined' ? undefined : new BroadcastChannel('flashcards-mutation-completions');
+
+  if (channel) channel.onmessage = event => {
+    const message = event.data as { item: StoredMutation; deck: DeckState };
+    incoming = incoming.then(async () => {
+      const current = backend;
+      if (closed || !current?.persistent || received.has(message.item.id) ||
+          !await sameDestination(message.item.destination, current.persistent.destination) || current !== backend) return;
+      await callbacks.onComplete(message.item, message.deck, true, 'source-writing');
+      received.add(message.item.id);
+      await refresh();
+    }).catch(callbacks.onError);
+  };
 
   function notify() { callbacks.onChange([...items], activeId, activity, [...matched]); }
   async function refresh() {
@@ -90,6 +105,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
         projected.add(item.id);
       }
       await storage.remove(item.id);
+      channel?.postMessage({ item, deck });
       fresh.delete(item.id);
       projected.delete(item.id);
     } catch (error) {
@@ -115,6 +131,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
   }
 
   async function work() {
+    await incoming;
     await refresh();
     const current = backend;
     if (!current?.persistent) return;
@@ -143,7 +160,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
     if (closed || !backend?.persistent) return;
     running = true;
     try {
-      if (!navigator.locks) throw new DeckRequestError('This browser cannot safely coordinate pending changes between tabs.');
+      if (!navigator.locks || !channel) throw new DeckRequestError('This browser cannot safely coordinate pending changes between tabs.');
       await navigator.locks.request('flashcards-mutation-queue', { ifAvailable: true }, async lock => {
         if (lock) await work();
         else schedule(2000);
@@ -205,6 +222,6 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
     void refresh().then(pump, callbacks.onError);
   }
   function wake() { void pump(); }
-  function close() { closed = true; clearTimeout(timer); }
+  function close() { closed = true; clearTimeout(timer); channel?.close(); }
   return { enqueue, discard, reviewAgain, setBackend, wake, close, refresh };
 }

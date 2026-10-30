@@ -28,8 +28,9 @@ function harness(storage: ReturnType<typeof storageFixture>) {
   const errors: unknown[] = [];
   const completed: string[] = [];
   let active: string | null = null;
-  const queue = createMutationQueue({ onChange(_items, id) { active = id; }, onError(error) { errors.push(error); }, deck: () => structuredClone(deck), async onComplete(value) { completed.push(value.id); } }, storage);
-  return { queue, errors, completed, active: () => active };
+  let visible: string[] = [];
+  const queue = createMutationQueue({ onChange(items, id) { active = id; visible = items.map(item => item.id); }, onError(error) { errors.push(error); }, deck: () => structuredClone(deck), async onComplete(value) { completed.push(value.id); } }, storage);
+  return { queue, errors, completed, active: () => active, visible: () => visible };
 }
 function backend(drive: string, execute: NonNullable<DeckBackend['persistent']>['execute']): DeckBackend {
   return { load: async () => deck, mutate: async () => deck, persistent: { destination: destination(drive), execute } };
@@ -134,4 +135,44 @@ test('retry after queue deletion failure does not project the completed change a
   await until(() => !storage.map.has('added') && !h.active());
   assert.deepEqual(h.completed, ['added']);
   h.queue.close();
+});
+
+test('a completion updates another connected tab without loading its deck', async () => {
+  const storage = storageFixture();
+  const first = harness(storage);
+  const second = harness(storage);
+  let loads = 0;
+  const connected = backend('account-a', async () => deck);
+  connected.load = async () => { loads++; return deck; };
+  first.queue.setBackend(connected);
+  second.queue.setBackend(connected);
+  await first.queue.enqueue(item('shared'));
+  await until(() => first.completed.includes('shared') && second.completed.includes('shared'));
+  await until(() => !second.visible().includes('shared'));
+  assert.equal(loads, 0);
+  assert.deepEqual(first.errors, []);
+  assert.deepEqual(second.errors, []);
+  first.queue.close(); second.queue.close();
+});
+
+test('other tabs are notified only after the completed item is removed', async () => {
+  const storage = storageFixture();
+  const remove = storage.remove;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let deleting = false;
+  storage.remove = async id => { deleting = true; await gate; await remove(id); };
+  const first = harness(storage);
+  const second = harness(storage);
+  const connected = backend('account-a', async () => deck);
+  first.queue.setBackend(connected); second.queue.setBackend(connected);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await first.queue.enqueue(item('delayed-removal'));
+  await until(() => deleting);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(second.completed, []);
+  release();
+  await until(() => second.completed.includes('delayed-removal'));
+  await until(() => !second.visible().includes('delayed-removal'));
+  first.queue.close(); second.queue.close();
 });
