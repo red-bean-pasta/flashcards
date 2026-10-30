@@ -1,3 +1,4 @@
+import { archiveFilename } from '../card-text.js';
 import { DeckRequestError } from '../deck-client.js';
 import { GraphError } from './graph.js';
 import type { GraphClient } from './graph.js';
@@ -38,7 +39,7 @@ function validOperation(value: unknown): value is PendingOperation {
   if (!record(value) || !nonempty(value.id) || !relativePath(value.source) || !validPlan(value.sourceWrite) || value.sourceWrite.name !== value.source) return false;
   if (!['add', 'edit', 'remove'].includes(value.action as string) || !['archive-ready', 'archive-writing', 'source-ready', 'source-writing'].includes(value.stage as string)) return false;
   if (value.action === 'remove') {
-    return value.sourceWrite.id !== null && validPlan(value.archiveWrite) && value.archiveWrite.name === 'removed.md' && value.archiveWrite.name !== value.source &&
+    return value.sourceWrite.id !== null && validPlan(value.archiveWrite) && value.archiveWrite.name === archiveFilename && value.archiveWrite.name !== value.source &&
       (value.archiveWrite.id === null || value.archiveWrite.id !== value.sourceWrite.id);
   }
   return value.archiveWrite === undefined && (value.action !== 'edit' || value.sourceWrite.id !== null) &&

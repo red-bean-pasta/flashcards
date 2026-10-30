@@ -110,10 +110,17 @@
     if (destroyed || candidateId !== id) return;
     const frame = pickerSlots.find(slot => slot.id === id)?.frame;
     if (!auth || !frame) throw new Error('OneDrive picker cannot start without authentication and a frame.');
-    const instance = createOneDrivePicker(frame, () => auth!.getPickerToken(), folder => {
-      if (activePickerId !== id) throw new DeckRequestError('This folder picker is not active.');
-      return selectPickerFolder(folder);
-    }, () => { if (activePickerId === id) closePicker(); }, error => pickerFailure(id, error), () => { if (activePickerId === id) { handlePickerSelected(); promotePicker(); } }, () => pickerReady(id));
+    const instance = createOneDrivePicker(frame, {
+      getToken: () => auth!.getPickerToken(),
+      select: folder => {
+        if (activePickerId !== id) throw new DeckRequestError('This folder picker is not active.');
+        return selectPickerFolder(folder);
+      },
+      onClose: () => { if (activePickerId === id) closePicker(); },
+      onError: error => pickerFailure(id, error),
+      onSelected: () => { if (activePickerId === id) { handlePickerSelected(); promotePicker(); } },
+      onReady: () => pickerReady(id),
+    });
     pickers.set(id, instance);
     readyTimer = setTimeout(() => pickerFailure(id, new DeckRequestError('The OneDrive folder picker did not respond. Please try refreshing it.')), 30000);
   }

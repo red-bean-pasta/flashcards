@@ -26,3 +26,14 @@ export function formatEntry(question: string, answer: string, eol: string): stri
 export function appendEntry(text: string, entry: string, eol: string): string {
   return text + (text && !text.endsWith(eol + eol) ? (text.endsWith(eol) ? eol : eol + eol) : '') + entry;
 }
+
+export const archiveFilename = 'removed.md';
+
+export function isNewSourceName(source: string): boolean {
+  return /^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)*\.md$/u.test(source);
+}
+
+export function appendArchivedEntries(archive: string, removed: string): string {
+  const eol = archive.match(/\r\n|\r|\n/)?.[0] ?? removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
+  return appendEntry(archive, removed, eol);
+}

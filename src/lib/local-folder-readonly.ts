@@ -1,15 +1,18 @@
+import { archiveFilename } from './card-text.js';
 import { CardParseError } from './card-ranges.js';
 import { parseBrowserCards } from './browser-cards.js';
 import { DeckRequestError } from './deck-client.js';
 import type { DeckBackend } from './deck-backend.js';
 import type { DeckState } from './types.js';
 
+export const readOnlyFolderMessage = 'This folder is read-only in your browser. To edit local files, use Chrome or Edge.';
+
 /** File inputs provide a snapshot, so a new selection is needed to refresh. */
 export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parseBrowserCards): DeckBackend {
   const selected = [...files].filter(file => {
     const parts = file.webkitRelativePath.split('/').slice(1);
     return parts.length > 0 && parts.every(part => !part.startsWith('.')) &&
-      parts.at(-1)!.toLowerCase() !== 'removed.md' && /\.md$/i.test(parts.at(-1)!);
+      parts.at(-1)!.toLowerCase() !== archiveFilename && /\.md$/i.test(parts.at(-1)!);
   });
   return {
     async load(signal?: AbortSignal): Promise<DeckState> {
@@ -29,7 +32,7 @@ export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parse
       }
       return { cards: errors.length ? [] : cards, files: Object.keys(revisions).sort(), revisions, errors };
     },
-    async mutate() { throw new DeckRequestError('Your browser does not support write to local storage'); },
+    async mutate() { throw new DeckRequestError(readOnlyFolderMessage); },
   };
 }
 

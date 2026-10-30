@@ -1,6 +1,7 @@
+import { archiveFilename, isNewSourceName, appendArchivedEntries } from '../src/lib/card-text.js';
 import path from 'node:path';
 import { MutationError, validateMutation, destination } from './mutation-contract.js';
-import { buildChange, appendEntry } from './markdown-mutation.js';
+import { buildChange } from './markdown-mutation.js';
 import { parseCardRanges, parseCards } from './parser.js';
 import { materialRevision } from './revision.js';
 import { atomicWrite, createWriteTransaction, readOptional } from './write-transaction.js';
@@ -18,11 +19,10 @@ export function createMutations(directory: string) {
   const transaction = createWriteTransaction(directory);
 
   async function removeWithArchive(filename: string, before: string, after: string, removed: string): Promise<void> {
-    const archive = path.join(directory, 'removed.md');
+    const archive = path.join(directory, archiveFilename);
     const archived = await readOptional(archive);
-    const eol = archived?.match(/\r\n|\r|\n/)?.[0] ?? removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
-    const nextArchive = appendEntry(archived ?? '', removed, eol);
-    parseCardRanges(nextArchive, 'removed.md');
+    const nextArchive = appendArchivedEntries(archived ?? '', removed);
+    parseCardRanges(nextArchive, archiveFilename);
     await transaction.commit([
       { filename: archive, before: archived, after: nextArchive },
       { filename, before, after },
@@ -36,7 +36,7 @@ export function createMutations(directory: string) {
     const original = await readOptional(filename);
     requireRevision(original, request.revision);
     if (original === null && request.action !== 'add') throw new MutationError('Card file no longer exists.', 409);
-    if (original === null && !/^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)*\.md$/u.test(request.source)) {
+    if (original === null && !isNewSourceName(request.source)) {
       throw new MutationError('New filenames must use file_name.md without a folder path.');
     }
     const change = buildChange(original ?? '', request);

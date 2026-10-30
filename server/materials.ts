@@ -1,3 +1,4 @@
+import { archiveFilename } from '../src/lib/card-text.js';
 import path from 'node:path';
 import { materialRevision } from './revision.js';
 import { CardParseError, parseCards } from './parser.js';
@@ -45,7 +46,7 @@ export function createMaterialLoader(directory: string, parse: typeof parseCards
   async function load(): Promise<DeckState> {
     let filenames: string[];
     try {
-      filenames = (await scanMarkdown(directory)).filter(filename => path.basename(filename).toLowerCase() !== 'removed.md');
+      filenames = (await scanMarkdown(directory)).filter(filename => path.basename(filename).toLowerCase() !== archiveFilename);
     } catch (error) {
       if (!isFilesystemError(error)) throw error;
       return { cards: [], files: [], revisions: {}, errors: [error.message] };

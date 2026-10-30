@@ -1,5 +1,6 @@
+import { archiveFilename, isNewSourceName, appendArchivedEntries } from './card-text.js';
 import { CardParseError } from './card-ranges.js';
-import { appendEntry, CardInputError } from './card-text.js';
+import { CardInputError } from './card-text.js';
 import { parseBrowserCards } from './browser-cards.js';
 import { DeckRequestError } from './deck-client.js';
 import { captureOperation, createOperationProjector, planContent } from './onedrive/operations.js';
@@ -23,7 +24,7 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
   async function scan(directory: Directory, found: Map<string, FileSystemFileHandle>, signal?: AbortSignal, prefix = ''): Promise<void> {
     for await (const entry of directory.values()) {
       signal?.throwIfAborted();
-      if (entry.name.startsWith('.') || entry.name.toLowerCase() === 'removed.md') continue;
+      if (entry.name.startsWith('.') || entry.name.toLowerCase() === archiveFilename) continue;
       const path = prefix + entry.name;
       if (entry.kind === 'directory') await scan(entry as Directory, found, signal, path + '/');
       else if (/\.md$/i.test(entry.name)) found.set(path, entry as FileSystemFileHandle);
@@ -57,6 +58,13 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     await stream.close();
   }
 
+  async function archiveRemoval(removed: string): Promise<void> {
+    const archive = await root.getFileHandle(archiveFilename, { create: true });
+    const old = await (await archive.getFile()).text();
+    parse(old, archiveFilename);
+    await write(archive, appendArchivedEntries(old, removed));
+  }
+
   async function mutate(request: MutationRequest, deck: DeckState): Promise<DeckState> {
     if (saving) throw new Error('Concurrent local folder save.');
     saving = true;
@@ -65,17 +73,13 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
       let handle = sources.get(operation.source);
       if (!handle) {
         if (operation.action !== 'add') throw new DeckRequestError('This file is no longer available. Refresh your notes.');
-        if (!/^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)*\.md$/u.test(operation.source)) throw new DeckRequestError('New filenames must use file_name.md without a folder path.');
+        if (!isNewSourceName(operation.source)) throw new DeckRequestError('New filenames must use file_name.md without a folder path.');
         handle = await root.getFileHandle(operation.source, { create: true });
       }
       const before = await (await handle.getFile()).text();
       const change = planContent(before, operation);
       if (operation.action === 'remove') {
-        const archive = await root.getFileHandle('removed.md', { create: true });
-        const old = await (await archive.getFile()).text();
-        parse(old, 'removed.md');
-        const eol = old.match(/\r\n|\r|\n/)?.[0] ?? change.removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
-        await write(archive, appendEntry(old, change.removed, eol));
+        await archiveRemoval(change.removed);
         if (await (await handle.getFile()).text() !== before) throw new DeckRequestError('The source changed after archival. Check removed.md and refresh before retrying.');
       } else if (await (await handle.getFile()).text() !== before) throw new DeckRequestError('The source changed during saving. Refresh and try again.');
       await write(handle, change.text);

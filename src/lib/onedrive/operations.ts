@@ -1,3 +1,4 @@
+import { archiveFilename } from '../card-text.js';
 import { parseCardRanges } from '../card-ranges.js';
 import { appendEntry, formatEntry } from '../card-text.js';
 import { parseBrowserCards } from '../browser-cards.js';
@@ -17,7 +18,7 @@ export function samePair(a: Pair, b: Pair): boolean {
 
 export function validateSource(source: string): void {
   if (!source || source.includes('\\') || source.includes('\0') || source.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.')) ||
-      !/\.md$/i.test(source) || source.split('/').at(-1)!.toLowerCase() === 'removed.md') {
+      !/\.md$/i.test(source) || source.split('/').at(-1)!.toLowerCase() === archiveFilename) {
     throw new DeckRequestError('Choose a Markdown file other than removed.md.');
   }
 }

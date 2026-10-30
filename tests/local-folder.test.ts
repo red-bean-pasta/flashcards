@@ -45,7 +45,7 @@ test('read-only folder loads selected Markdown and rejects writes', async () => 
   const deck = await backend.load();
   assert.deepEqual(deck.files, ['nested/notes.md']);
   assert.equal(deck.cards[0].question, 'One');
-  await assert.rejects(backend.mutate({ action: 'remove', source: 'nested/notes.md', index: 0, revision: null }, deck), /does not support write/);
+  await assert.rejects(backend.mutate({ action: 'remove', source: 'nested/notes.md', index: 0, revision: null }, deck), /read-only in your browser/);
 });
 
 test('read-only folder name comes from the selected root path', async () => {

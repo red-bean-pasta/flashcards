@@ -1,5 +1,6 @@
+import { archiveFilename, isNewSourceName, appendArchivedEntries } from '../card-text.js';
 import { CardParseError } from '../card-ranges.js';
-import { appendEntry, CardInputError } from '../card-text.js';
+import { CardInputError } from '../card-text.js';
 import { parseBrowserCards } from '../browser-cards.js';
 import { DeckRequestError } from '../deck-client.js';
 import type { DeckState, MutationRequest } from '../types.js';
@@ -28,7 +29,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     const nextAncestors = new Set([...ancestors, id]);
     for (const item of await graph.children(id)) {
       signal?.throwIfAborted();
-      if (item.name.startsWith('.') || item.name.toLowerCase() === 'removed.md') continue;
+      if (item.name.startsWith('.') || item.name.toLowerCase() === archiveFilename) continue;
       const source = prefix + item.name;
       if (item.folder) await scan(item.id, found, signal, source + '/', nextAncestors);
       else if (item.file && /\.md$/i.test(item.name)) found.set(source, item);
@@ -64,7 +65,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     let item = sources.get(operation.source);
     if (!item) {
       if (operation.action !== 'add') throw new DeckRequestError('This card file is no longer available. Refresh to review your notes.');
-      if (!/^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)*\.md$/u.test(operation.source)) throw new DeckRequestError('New filenames must use file_name.md without a folder path.');
+      if (!isNewSourceName(operation.source)) throw new DeckRequestError('New filenames must use file_name.md without a folder path.');
       item = await graph.findChild(folder.id, operation.source) ?? undefined;
       if (item && !item.file) throw new DeckRequestError('That name belongs to a folder. Choose another filename.');
       if (item) sources.set(operation.source, item);
@@ -75,14 +76,13 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   }
 
   async function archivePlan(removed: string): Promise<WritePlan> {
-    const item = await graph.findChild(folder.id, 'removed.md');
+    const item = await graph.findChild(folder.id, archiveFilename);
     if (item && !item.file) throw new DeckRequestError('removed.md is not a file. The source was not removed.');
     const before = item ? await graph.readText(item.id) : null;
-    if (before) parse(before.text, 'removed.md');
-    const eol = before?.text.match(/\r\n|\r|\n/)?.[0] ?? removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
-    const after = appendEntry(before?.text ?? '', removed, eol);
-    parse(after, 'removed.md');
-    return { id: item?.id ?? null, name: 'removed.md', before: before?.text ?? null, revision: before?.revision ?? null, after };
+    if (before) parse(before.text, archiveFilename);
+    const after = appendArchivedEntries(before?.text ?? '', removed);
+    parse(after, archiveFilename);
+    return { id: item?.id ?? null, name: archiveFilename, before: before?.text ?? null, revision: before?.revision ?? null, after };
   }
 
   async function publish(plan: WritePlan): Promise<GraphItem> {

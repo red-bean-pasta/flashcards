@@ -4,7 +4,7 @@
   import OneDriveConnection from './components/OneDriveConnection.svelte';
   import { fade } from 'svelte/transition';
   import { pickLocalFolder } from './lib/local-folder';
-  import { createReadOnlyFolderBackend, selectedFolderName } from './lib/local-folder-readonly';
+  import { createReadOnlyFolderBackend, readOnlyFolderMessage, selectedFolderName } from './lib/local-folder-readonly';
   import { type DeckBackend } from './lib/deck-backend';
   import Collection from './components/Collection.svelte';
   import Flashcard from './components/Flashcard.svelte';
@@ -283,7 +283,7 @@
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
           {#if writeNotice}
-            <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>Your browser does not support write to local storage</span>
+            <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
           {:else}
             <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>

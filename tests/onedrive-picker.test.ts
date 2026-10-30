@@ -24,7 +24,7 @@ test('persistent picker validates initialization and handles repeated selections
     let closes = 0;
     let selections = 0;
     let ready = 0;
-    const picker = createOneDrivePicker(env.frame, async () => 'personal-token', async folder => { selected.push(folder.id); }, () => { closes++; }, error => { throw error; }, () => { selections++; }, () => { ready++; });
+    const picker = createOneDrivePicker(env.frame, { getToken: async () => 'personal-token', select: async folder => { selected.push(folder.id); }, onClose: () => { closes++; }, onError: error => { throw error; }, onSelected: () => { selections++; }, onReady: () => { ready++; } });
     await new Promise(resolve => setImmediate(resolve));
     const form = env.getForm();
     const url = new URL(form.action);
@@ -64,7 +64,7 @@ test('selection remains in flight until completed and errors are reported', asyn
     let failSelection!: (error: Error) => void;
     let reported: unknown;
     let closes = 0;
-    const picker = createOneDrivePicker(env.frame, async () => 'token', () => new Promise<void>((_, reject) => { failSelection = reject; }), () => { closes++; }, error => { reported = error; }, () => {}, () => {});
+    const picker = createOneDrivePicker(env.frame, { getToken: async () => 'token', select: () => new Promise<void>((_, reject) => { failSelection = reject; }), onClose: () => { closes++; }, onError: error => { reported = error; }, onSelected: () => {}, onReady: () => {} });
     await new Promise(resolve => setImmediate(resolve));
     const channelId = JSON.parse(new URL(env.getForm().action).searchParams.get('filePicker')!).messaging.channelId;
     env.initialize({ origin: 'https://onedrive.live.com', source: env.source, data: { type: 'initialize', channelId }, ports: [env.port] });
@@ -84,7 +84,7 @@ test('disposing before token acquisition prevents submission', async () => {
   const env = setup();
   try {
     let supply!: (token: string) => void;
-    const picker = createOneDrivePicker(env.frame, () => new Promise(resolve => { supply = resolve; }), async () => {}, () => {}, error => { throw error; }, () => {}, () => {});
+    const picker = createOneDrivePicker(env.frame, { getToken: () => new Promise(resolve => { supply = resolve; }), select: async () => {}, onClose: () => {}, onError: error => { throw error; }, onSelected: () => {}, onReady: () => {} });
     picker.dispose();
     supply('token');
     await new Promise(resolve => setImmediate(resolve));

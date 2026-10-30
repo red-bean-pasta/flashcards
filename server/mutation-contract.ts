@@ -1,3 +1,4 @@
+import { archiveFilename } from '../src/lib/card-text.js';
 import path from 'node:path';
 import type { MutationRequest } from '../src/lib/types.js';
 
@@ -24,7 +25,7 @@ export function validateMutation(value: unknown): MutationRequest {
 export function destination(directory: string, source: string): string {
   if (!source || source.includes('\\') || source.includes('\0') || path.posix.isAbsolute(source) ||
       source.split('/').some(part => !part || part === '.' || part === '..') || !/\.md$/i.test(source) ||
-      path.posix.basename(source).toLowerCase() === 'removed.md') throw new MutationError('Choose a Markdown file other than removed.md.');
+      path.posix.basename(source).toLowerCase() === archiveFilename) throw new MutationError('Choose a Markdown file other than removed.md.');
   return path.join(directory, source);
 }
 

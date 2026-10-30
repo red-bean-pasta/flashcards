@@ -1,3 +1,4 @@
+import { archiveFilename } from './card-text.js';
 export function sourceLabel(source: string): string {
   return source.replace(/\.md$/i, '').split('/').map(part =>
     part.replace(/[_-]+/g, ' ').replace(/\b\p{L}/gu, letter => letter.toUpperCase())).join(' / ');
@@ -17,6 +18,6 @@ export function resolveSource(files: string[], text: string, chosen: string) {
   const create = !chosen && matching.length === 0;
   const source = chosen || matching[0] || newSource(text);
   if (!source) return { source: '', create: false, error: 'Enter a file name.' };
-  const error = source.toLowerCase() === 'removed.md' ? 'removed.md is reserved for archived cards.' : '';
+  const error = source.toLowerCase() === archiveFilename ? 'removed.md is reserved for archived cards.' : '';
   return { source, create, error };
 }
