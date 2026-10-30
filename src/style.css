@@ -407,11 +407,10 @@ dialog input:focus-visible, dialog textarea:focus-visible, .add-panel input:focu
 .primary-action:disabled { opacity: .5; cursor: default; }
 .save-error { color: #965331; line-height: 1.5; }
 dialog.remove-banner {
-  position: fixed; left: 0; right: 0; top: auto; bottom: 0; margin: 0;
+  position: fixed; z-index: 4; left: 0; right: 0; top: auto; bottom: 0; margin: 0;
   width: 100%; max-width: none; max-height: 100dvh;
   border: 0; border-radius: 0;
   box-shadow: 0 5px 20px rgb(0 0 0 / .18);
-  animation: removal-slide-up 140ms ease both;
 }
 dialog.remove-banner::backdrop { background: transparent; }
 dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - min(100vw, 40vh)); }
@@ -423,12 +422,10 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 .remove-confirmation { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .remove-banner .save-error { margin: 0; }
 @media (max-width: 700px) { .remove-banner form { flex-wrap: wrap; } }
-@keyframes removal-slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { dialog.remove-banner { animation: none; } }
 .remove-confirmation p { margin: 0; }
 .remove-confirmation blockquote { margin: 6px 0 0; padding-left: 12px; border-left: 2px solid #c5ceba; color: #75806e; }
 
-.add-panel { position: fixed; z-index: 10; inset: 0 0 0 auto; width: var(--add-panel-width); background: var(--dialog-color); box-shadow: -2px 0 18px #0002; animation: add-panel-enter 300ms ease both; }
+.add-panel { position: fixed; z-index: 10; inset: 0 0 0 auto; width: var(--add-panel-width); background: var(--dialog-color); box-shadow: -2px 0 18px #0002; }
 .add-panel-content { height: 100%; overflow: auto; padding: 28px; }
 .add-panel-content form { display: flex; flex-direction: column; height: 100%; }
 .add-panel-content form > * { flex-shrink: 0; }
@@ -438,8 +435,6 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 .add-panel-resize { position: absolute; z-index: 2; top: 0; left: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
 .add-panel-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
 @media (aspect-ratio < 5/6) { .add-panel-resize { display: none; } }
-@keyframes add-panel-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@media (prefers-reduced-motion: reduce) { .add-panel { animation: none; } }
 
 .history-button { position: relative; isolation: isolate; }
 .history-button::before { content: ''; position: absolute; z-index: -1; inset: -5px -8px; border-radius: 6px; background: transparent; }
@@ -465,3 +460,11 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 .history-status.failed, .history-error { color: #b52f2f; }
 .history-error { margin: 0; overflow-wrap: anywhere; }
 .history-entry > button { justify-self: start; }
+
+/* Keep banners within the area left of an open side panel. */
+@media (aspect-ratio < 5/6) { .shell.card-panel-open .storage-connection { right: var(--add-panel-width); } }
+.shell.card-panel-open dialog.remove-banner { right: var(--add-panel-width); width: calc(100% - var(--add-panel-width)); }
+.shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - min(100vw, 40vh)); }
+@media (min-aspect-ratio: 5/6) {
+  .shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - clamp(40vh, var(--picker-width), 75vw)); }
+}

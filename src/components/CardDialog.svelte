@@ -6,10 +6,11 @@
   import { resizeTextarea } from '../lib/resize-textarea';
   import { cardPosition } from '../lib/card-mutations';
   import { resolveSource, sourceLabel } from '../lib/source-names';
+  import { panelTransition } from '../lib/panel-transition';
 
-  let { action, card, deck, selectedSource, onSubmit, onClose, pickerOpen, addWidth, onResizeAdd, onAddResizing, allOccurrences = false }: {
+  let { action, card, deck, selectedSource, onSubmit, onClose, pickerOpen, addWidth, onResizeAdd, onAddResizing, allOccurrences = false, draft, onDraft, onSaved }: {
     action: 'add' | 'edit' | 'remove'; card: Card | undefined; deck: DeckState; selectedSource: string;
-    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; pickerOpen: boolean; addWidth: number; onResizeAdd: (clientX: number) => void; onAddResizing: (value: boolean) => void; allOccurrences?: boolean;
+    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; pickerOpen: boolean; addWidth: number; onResizeAdd: (clientX: number) => void; onAddResizing: (value: boolean) => void; allOccurrences?: boolean; draft?: { question: string; answer: string; fileInput: string; chosenSource: string }; onDraft?: (draft: { question: string; answer: string; fileInput: string; chosenSource: string }) => void; onSaved?: () => void;
   } = $props();
   // The current practice card may disappear while an asynchronous Remove
   // completes. The dialog owns the card snapshot it was opened for.
@@ -20,13 +21,24 @@
   });
   let dialog = $state<HTMLDialogElement>(undefined!);
   let panel = $state<HTMLElement>(undefined!);
-  let question = $state(initial.question);
-  let answer = $state(initial.answer);
-  let fileInput = $state(sourceLabel(initial.source));
-  let chosenSource = $state(initial.source);
+  const savedDraft = untrack(() => draft);
+  let question = $state(savedDraft?.question ?? initial.question);
+  let answer = $state(savedDraft?.answer ?? initial.answer);
+  let fileInput = $state(savedDraft?.fileInput ?? sourceLabel(initial.source));
+  let chosenSource = $state(savedDraft?.chosenSource ?? initial.source);
   let busy = $state(false);
   let error = $state('');
   const destination = $derived(resolveSource(deck.files, fileInput, chosenSource));
+
+  $effect(() => { const value = { question, answer, fileInput, chosenSource }; if (action !== 'remove') untrack(() => onDraft?.(value)); });
+  const modified = $derived(action === 'add' ? !!question || !!answer || fileInput !== sourceLabel(initial.source) || chosenSource !== initial.source : question !== initial.question || answer !== initial.answer);
+
+  function outside(event: PointerEvent) {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (action === 'remove') { if (!dialog.contains(target) && !(target instanceof Element && target.closest('[data-remove-toggle]'))) close(); }
+    else if (!panel.contains(target) && !(target instanceof Element && target.closest('button')) && !modified) close();
+  }
 
   function close() { if (!busy) onClose(); }
 
@@ -45,7 +57,7 @@
     const request = buildRequest();
     if (!request) return;
     busy = true;
-    try { await onSubmit(request); onClose(); }
+    try { await onSubmit(request); onSaved?.(); onClose(); }
     catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
     finally { busy = false; }
   }
@@ -54,10 +66,10 @@
     const previous = document.activeElement;
     if (action !== 'remove') {
       panel.querySelector<HTMLElement>(action === 'add' ? 'input' : 'textarea')?.focus();
-      return () => { if (previous instanceof HTMLElement) previous.focus(); };
+      return () => { if (panel.contains(document.activeElement) && previous instanceof HTMLElement) previous.focus(); };
     }
-    dialog.showModal();
-    return () => { dialog.close(); if (previous instanceof HTMLElement) previous.focus(); };
+    dialog.show();
+    return () => { const restore = dialog.contains(document.activeElement); dialog.close(); if (restore && previous instanceof HTMLElement) previous.focus(); };
   });
 </script>
 
@@ -89,9 +101,9 @@
   </form>
 {/snippet}
 
-<svelte:window onkeydown={event => { if (action !== 'remove' && event.key === 'Escape' && !event.defaultPrevented) close(); }} />
+<svelte:window onpointerdown={outside} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) close(); }} />
 {#if action !== 'remove'}
-  <aside class="add-panel" bind:this={panel} aria-labelledby="card-dialog-title">
+  <aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="card-dialog-title">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: Keyboard-accessible window splitter. -->
     <div class="add-panel-resize" role="separator" tabindex="0" aria-label={action === 'add' ? 'Resize add panel' : 'Resize edit panel'} aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(addWidth)}
       onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(event.clientX); } }}
@@ -101,7 +113,7 @@
     <div class="add-panel-content">{@render cardForm()}</div>
   </aside>
 {:else}
-<dialog bind:this={dialog} class:remove-banner={action === 'remove'} class:picker-open={pickerOpen} aria-labelledby="card-dialog-title" oncancel={event => { event.preventDefault(); close(); }}>
+<dialog transition:panelTransition|global={{ axis: 'Y', duration: 140 }} bind:this={dialog} class:remove-banner={action === 'remove'} class:picker-open={pickerOpen} aria-labelledby="card-dialog-title" oncancel={event => { event.preventDefault(); close(); }}>
   {@render cardForm()}
 </dialog>
 {/if}

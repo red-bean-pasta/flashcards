@@ -27,7 +27,11 @@
   let selectedSource = $state('');
   let failure = $state<{ message: string; source: 'local-picker' | 'deck' } | null>(null);
   const networkError = $derived(failure?.message ?? '');
-  let dialogAction = $state<'add' | 'edit' | 'remove' | 'history' | null>(null);
+  let dialogAction = $state<'add' | 'edit' | 'history' | null>(null);
+  let removeOpen = $state(false);
+  type Draft = { question: string; answer: string; fileInput: string; chosenSource: string };
+  let addDraft = $state<Draft>();
+  let editDrafts = $state<Record<string, Draft>>({});
   let history = $state<HistoryEntry[]>([]);
   let pendingItems = $state.raw<StoredMutation[]>([]);
   let activeId = $state<string | null>(null);
@@ -66,7 +70,8 @@
   const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit' || dialogAction === 'history');
 
   function openCardPanel(action: 'add' | 'edit') {
-    dialogAction = action;
+    oneDrive.closePicker(false);
+    dialogAction = dialogAction === action ? null : action;
   }
 
   function closeCardPanel() {
@@ -123,6 +128,7 @@
 
   function setBackend(next: DeckBackend, readonly: boolean, name: string, source: 'local' | 'onedrive') {
     queue.setBackend(undefined);
+    addDraft = undefined; editDrafts = {};
     if (source === 'local') oneDrive.clearActionError();
     restoreAttempt++;
     rememberProvider(source);
@@ -318,7 +324,7 @@
     onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
     onActivity={value => { storageActivity = value; }} onPickerChange={value => { pickerOpen = value; }}
     {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width', String(value)); }}
-    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !dialogAction && !pendingWrites} />
+    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   {#if backend}
     <aside class="storage-connection" aria-label="Card storage">
       <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
@@ -330,8 +336,8 @@
         </div>
       {:else}
         <div class="storage-actions" transition:fade={{ duration: 150 }}>
-          <button class="text-action" disabled={loading || storageBusy || !!dialogAction || !!pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
-          <button class="text-action" disabled={loading || storageBusy || !!dialogAction || !!pendingWrites} onclick={() => provider === 'local' ? connectLocal() : oneDrive.openPicker()}>{folderName}</button>
+          <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
+          <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} onclick={() => { closeCardPanel(); if (provider === 'local') void connectLocal(); else oneDrive.openPicker(); }}>{folderName}</button>
         </div>
       {/if}
       </div>
@@ -391,11 +397,11 @@
             <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
           {:else}
             <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
-            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
-            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => { if (readOnly) showWriteNotice(); else dialogAction = 'remove'; }}>Remove</button>
-            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
-            <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction || !!pendingWrites} onclick={refresh}>Refresh</button>
-            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!dialogAction} onclick={() => { dialogAction = 'history'; }}>History</button>
+            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
+            <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
+            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
+            <button class="text-action" disabled={loading || storageBusy || !backend || !!pendingWrites} onclick={refresh}>Refresh</button>
+            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
             </div>
           {/if}
         </nav>
@@ -404,15 +410,25 @@
   </div>
 
   {#if dialogAction === 'history'}
-    <HistoryPanel history={historyEntries} problem={queueProblem} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={closeCardPanel} onReview={id => {
+    <HistoryPanel history={historyEntries} problem={queueProblem} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
       void queue.reviewAgain(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     }} onDismiss={id => {
       if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
       else history = history.filter(entry => entry.id !== id);
     }} />
-  {:else if dialogAction}
-    <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
-      onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={closeCardPanel} />
+  {:else if dialogAction === 'add' || (dialogAction === 'edit' && current)}
+    {#key dialogAction === 'edit' ? current?.id : 'add'}
+      {@const action = dialogAction}
+      {@const cardId = current?.id}
+      <CardDialog {action} card={current} {deck} {selectedSource}
+        draft={action === 'add' ? addDraft : editDrafts[cardId!]}
+        onDraft={draft => { if (action === 'add') addDraft = draft; else editDrafts[cardId!] = draft; }}
+        onSaved={() => { if (action === 'add') addDraft = undefined; else delete editDrafts[cardId!]; }}
+        onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { if (dialogAction === action && (action === 'add' || current?.id === cardId)) closeCardPanel(); }} />
+    {/key}
+  {/if}
+  {#if removeOpen}
+    <CardDialog action="remove" card={current} {deck} {selectedSource} onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { removeOpen = false; }} />
   {/if}
 
   {#if showProgress}

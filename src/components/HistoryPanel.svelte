@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { HistoryEntry } from '../lib/history';
+  import { panelTransition } from '../lib/panel-transition';
 
   let { history, problem = '', addWidth, onResizeAdd, onAddResizing, onClose, onDismiss, onReview }: {
     history: HistoryEntry[]; addWidth: number; onResizeAdd: (x: number) => void;
@@ -16,12 +17,12 @@
     const previous = document.activeElement;
     const timer = setInterval(() => { now = Date.now(); }, 1000);
     panel.querySelector<HTMLButtonElement>('.history-close')?.focus();
-    return () => { clearInterval(timer); if (previous instanceof HTMLElement) previous.focus(); };
+    return () => { clearInterval(timer); if (panel.contains(document.activeElement) && previous instanceof HTMLElement) previous.focus(); };
   });
 </script>
 
-<svelte:window onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) onClose(); }} />
-<aside class="add-panel" bind:this={panel} aria-labelledby="history-title">
+<svelte:window onpointerdown={event => { const target = event.target; if (target instanceof Node && !panel.contains(target) && !(target instanceof Element && target.closest('button'))) onClose(); }} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) onClose(); }} />
+<aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="history-title">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: Keyboard-accessible window splitter. -->
   <div class="add-panel-resize" role="separator" tabindex="0" aria-label="Resize history panel" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(addWidth)}
     onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(event.clientX); } }}
