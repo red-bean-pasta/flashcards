@@ -47,3 +47,35 @@ test('an in-place cross-tab addition preserves the current practice position', (
   assert.equal(next.order[next.index].id, current);
   assert.equal(next.order.length, 4);
 });
+
+test('pending removals advance the session and restore cards if dismissed', async () => {
+  const { createPendingProjector } = await import('../src/lib/pending-projection.ts');
+  const pending = createPendingProjector(parse);
+  const cards = parse(entry('One') + entry('Two') + entry('One') + entry('Three'), 'cards.md');
+  const deck = { cards, files: ['cards.md'], errors: [], revisions: { 'cards.md': 'before' } };
+  const request = { action: 'remove' as const, source: 'cards.md', revision: 'before', index: 0 };
+  const item: StoredMutation = { id: 'remove', createdAt: 1, destination: { provider: 'onedrive', driveId: 'd', folderId: 'f' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  const session = { order: cards, index: 0, revealed: true };
+  const visible = pending(deck, [item], [item.id]);
+  const next = updateSession(session, visible.cards);
+  assert.deepEqual(visible.cards.map(card => card.question), ['Two', 'Three']);
+  assert.equal(next.order[next.index].question, 'Two');
+  assert.equal(next.revealed, false);
+  assert.equal(pending(deck, [item], []).cards.length, 4);
+  assert.equal(pending(deck, [], []).cards.length, 4);
+});
+
+test('pending edits are visible and subsequent changes target the edited pair', async () => {
+  const { createPendingProjector } = await import('../src/lib/pending-projection.ts');
+  const pending = createPendingProjector(parse);
+  const cards = parse(entry('Old') + entry('Old'), 'cards.md');
+  const deck = { cards, files: ['cards.md'], errors: [], revisions: { 'cards.md': 'before' } };
+  const request = { action: 'edit' as const, source: 'cards.md', revision: 'before', index: 0, question: 'New', answer: 'A' };
+  const item: StoredMutation = { id: 'edit', createdAt: 1, destination: { provider: 'onedrive', driveId: 'd', folderId: 'f' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  const visible = pending(deck, [item], [item.id]);
+  assert.deepEqual(visible.cards.map(card => card.question), ['New', 'New']);
+  assert.deepEqual(visible.cards.map(card => card.id), cards.map(card => card.id));
+  const remove = { action: 'remove' as const, source: 'cards.md', revision: 'before', index: 0 };
+  assert.equal(captureOperation(visible, remove).original?.question, 'New');
+  assert.deepEqual(pending(visible, [item], [item.id]).cards.map(card => card.question), ['New', 'New']);
+});

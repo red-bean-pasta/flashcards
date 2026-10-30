@@ -26,6 +26,9 @@
   --source-font-ratio: 90%;        /* Of the Question label, not the question body. */
   --blockquote-font-ratio: 75%;    /* Of its section body: answer or question. */
   --collection-font-size: 0.75rem; /* Practice from, selection, card count and status. */
+  --history-success-color: #a7b29a; /* Matches the progress bar. */
+  --history-failure-color: #b29a9a; /* Muted red matching the success color. */
+  --history-background-transparency: 40%; /* 0% is opaque; 100% is transparent. */
   --progress-thickness: 1%;       /* Of viewport height on desktop, width on mobile. */
   /* Fade means transparency: 0% keeps text visible, 100% makes it invisible. */
   --question-fade-top: 75%;        /* Fading at the top of the whole question block. */
@@ -437,12 +440,12 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 @media (aspect-ratio < 5/6) { .add-panel-resize { display: none; } }
 
 .history-button { position: relative; isolation: isolate; }
-.history-button::before { content: ''; position: absolute; z-index: -1; inset: -5px -8px; border-radius: 6px; background: transparent; }
-.history-button.has-failures::before { background: rgb(220 50 50 / 30%); }
+.history-button::before { content: ''; position: absolute; z-index: -1; inset: 0 -8px; border-radius: 6px; background: transparent; }
+.history-button.has-failures::before { background: color-mix(in srgb, var(--history-failure-color), transparent var(--history-background-transparency)); }
 .history-button.blink-success::before { animation: history-success 800ms ease-in-out 2; }
 .history-button.blink-failed::before { animation: history-failed 800ms ease-in-out 2; }
-@keyframes history-success { 50% { background: rgb(40 170 80 / 30%); } }
-@keyframes history-failed { 0%, 100% { background: transparent; } 50% { background: rgb(220 50 50 / 30%); } }
+@keyframes history-success { 50% { background: color-mix(in srgb, var(--history-success-color), transparent var(--history-background-transparency)); } }
+@keyframes history-failed { 0%, 100% { background: transparent; } 50% { background: color-mix(in srgb, var(--history-failure-color), transparent var(--history-background-transparency)); } }
 .history-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .history-list { display: grid; gap: 12px; }
 .history-entry { display: grid; gap: 8px; padding: 16px; border-radius: 12px; background: var(--dialog-input-color); min-width: 0; }
@@ -468,3 +471,7 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 @media (min-aspect-ratio: 5/6) {
   .shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - clamp(40vh, var(--picker-width), 75vw)); }
 }
+
+.history-preview { position: fixed; z-index: 100; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; background: #f5f4ef; }
+.history-preview .preview-success::before { background: color-mix(in srgb, var(--history-success-color), transparent var(--history-background-transparency)); }
+.history-preview .preview-failure::before { background: color-mix(in srgb, var(--history-failure-color), transparent var(--history-background-transparency)); }

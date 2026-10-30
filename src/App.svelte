@@ -21,6 +21,7 @@
   import type { StoredMutation } from './lib/mutation-storage';
   import { captureOperation } from './lib/onedrive/operations';
   import { projectRecoveredMutation } from './lib/mutation-projection';
+  import { projectPendingMutations } from './lib/pending-projection';
 
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
@@ -105,13 +106,14 @@
         blinkTimer = setTimeout(() => { blink = null; }, 1600);
       }
       pendingItems = items; activeId = active; queueActivity = activity; matchedIds = matched;
+      session = updateSession(session, filterCards(projectPendingMutations(deck, items, matched).cards, selectedSource));
     },
     onError: error => { console.error(error); queueProblem = error instanceof Error ? error.message : String(error); },
     deck: () => $state.snapshot(deck),
     onComplete: async (item, next, resumed, startedAt) => {
       if (!backend) throw new DeckRequestError('Reconnect the original folder to complete this change.');
       const updated = projectRecoveredMutation(deck, item, next, !resumed && startedAt === 'releasing' ? 'source-writing' : startedAt);
-      session = updateSession(session, filterCards(updated.cards, selectedSource));
+      session = updateSession(session, filterCards(projectPendingMutations(updated, pendingItems, matchedIds, item.id).cards, selectedSource));
       deck = updated;
       history = [{ id: item.id, timestamp: new Date(item.createdAt), action: item.operation.action,
         question: item.operation.action === 'remove' ? item.operation.original!.question : item.operation.replacement.question,
@@ -156,7 +158,8 @@
   const { order, index, revealed } = $derived(session);
   const current = $derived(order[index]);
   const blocked = $derived(deck.errors.length > 0 || !!networkError);
-  const available = $derived(filterCards(deck.cards, selectedSource));
+  const visibleDeck = $derived(projectPendingMutations(deck, pendingItems, matchedIds));
+  const available = $derived(filterCards(visibleDeck.cards, selectedSource));
   const remaining = $derived(order.length - index - (revealed ? 1 : 0));
   const showProgress = $derived(order.length > 0 && !blocked && !switchingOneDrive);
 
@@ -175,7 +178,7 @@
   async function saveCard(request: MutationRequest) {
     if (loading || storageBusy || !backend) throw new Error('Cannot save without an available card source.');
     if (!backend.persistent) throw new Error('The selected card source cannot persist changes.');
-    const snapshot = structuredClone(sourceSnapshot($state.snapshot(deck), request.source));
+    const snapshot = structuredClone(sourceSnapshot($state.snapshot(visibleDeck), request.source));
     const operation = captureOperation(snapshot, request);
     const target = operation.original;
     const entry: HistoryEntry = {
@@ -390,7 +393,7 @@
       </main>
 
       <footer class="collection-footer">
-        <Collection files={deck.files} total={deck.cards.length} available={available.length}
+        <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">
           {#if writeNotice}
@@ -420,7 +423,7 @@
     {#key dialogAction === 'edit' ? current?.id : 'add'}
       {@const action = dialogAction}
       {@const cardId = current?.id}
-      <CardDialog {action} card={current} {deck} {selectedSource}
+      <CardDialog {action} card={current} deck={visibleDeck} {selectedSource}
         draft={action === 'add' ? addDraft : editDrafts[cardId!]}
         onDraft={draft => { if (action === 'add') addDraft = draft; else editDrafts[cardId!] = draft; }}
         onSaved={() => { if (action === 'add') addDraft = undefined; else delete editDrafts[cardId!]; }}
@@ -428,10 +431,17 @@
     {/key}
   {/if}
   {#if removeOpen}
-    <CardDialog action="remove" card={current} {deck} {selectedSource} onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { removeOpen = false; }} />
+    <CardDialog action="remove" card={current} deck={visibleDeck} {selectedSource} onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { removeOpen = false; }} />
   {/if}
 
   {#if showProgress}
     <Progress {remaining} total={order.length} />
   {/if}
 </div>
+
+{#if preview === 'history-colors'}
+  <div class="history-preview">
+    <div class="card-action-buttons"><button class="text-action">Add</button><button class="text-action">Remove</button><button class="text-action">Edit</button><button class="text-action history-button preview-success">History</button></div>
+    <div class="card-action-buttons"><button class="text-action">Add</button><button class="text-action">Remove</button><button class="text-action">Edit</button><button class="text-action history-button preview-failure">History</button></div>
+  </div>
+{/if}
