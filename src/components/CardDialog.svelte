@@ -6,7 +6,6 @@
   import { resizeTextarea } from '../lib/resize-textarea';
   import { cardPosition } from '../lib/card-mutations';
   import { resolveSource, sourceLabel } from '../lib/source-names';
-  import { DeckRequestError } from '../lib/deck-client';
 
   let { action, card, deck, selectedSource, onSubmit, onClose, pickerOpen, addWidth, onResizeAdd, onAddResizing, allOccurrences = false }: {
     action: 'add' | 'edit' | 'remove'; card: Card | undefined; deck: DeckState; selectedSource: string;
@@ -42,18 +41,13 @@
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    if (busy) return;
     error = '';
     const request = buildRequest();
     if (!request) return;
     busy = true;
-    try {
-      await onSubmit(request);
-      onClose();
-    } catch (failure) {
-      if (!(failure instanceof DeckRequestError)) throw failure;
-      error = failure.message;
-    } finally { busy = false; }
+    try { await onSubmit(request); onClose(); }
+    catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
+    finally { busy = false; }
   }
 
   onMount(() => {

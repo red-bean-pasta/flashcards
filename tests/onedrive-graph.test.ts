@@ -106,6 +106,12 @@ test('authorization and throttling require explicit reconnect/retry; root valida
   assert.equal(calls.length, 3);
 });
 
+test('drive identity is read from the drive resource and validated', async () => {
+  const { client } = fake([Response.json({ id: 'account-drive' }), Response.json({})]);
+  assert.equal(await client.driveId(), 'account-drive');
+  await assert.rejects(client.driveId(), GraphError);
+});
+
 function interruptedBody(error: Error, status = 200): Response {
   return new Response(new ReadableStream({ start(controller) { controller.error(error); } }), { status });
 }

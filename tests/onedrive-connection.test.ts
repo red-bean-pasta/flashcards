@@ -18,6 +18,7 @@ function fixture() {
   const hooks: { root?: () => void; remember?: () => void; find?: (name: string) => void } = {};
   const written: string[] = [];
   const graph = {
+    async driveId() { return 'drive'; },
     async root() { hooks.root?.(); return root; },
     async findChild(parent: string, name: string) {
       hooks.find?.(name);

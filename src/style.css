@@ -440,3 +440,28 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 @media (aspect-ratio < 5/6) { .add-panel-resize { display: none; } }
 @keyframes add-panel-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .add-panel { animation: none; } }
+
+.history-button { position: relative; isolation: isolate; }
+.history-button::before { content: ''; position: absolute; z-index: -1; inset: -5px -8px; border-radius: 6px; background: transparent; }
+.history-button.has-failures::before { background: rgb(220 50 50 / 30%); }
+.history-button.blink-success::before { animation: history-success 800ms ease-in-out 2; }
+.history-button.blink-failed::before { animation: history-failed 800ms ease-in-out 2; }
+@keyframes history-success { 50% { background: rgb(40 170 80 / 30%); } }
+@keyframes history-failed { 0%, 100% { background: transparent; } 50% { background: rgb(220 50 50 / 30%); } }
+.history-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.history-list { display: grid; gap: 12px; }
+.history-entry { display: grid; gap: 8px; padding: 16px; border-radius: 12px; background: var(--dialog-input-color); min-width: 0; }
+.history-entry details { min-width: 0; }
+.history-timestamp { color: #75806e; font-size: .8em; }
+.history-entry summary::-webkit-details-marker { display: none; }
+.history-entry summary { display: block; list-style: none; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-expanded { display: none; }
+.history-entry details[open] summary { white-space: normal; overflow: visible; }
+.history-entry details[open] .history-collapsed { display: none; }
+.history-entry details[open] .history-expanded { display: block; }
+.history-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; cursor: pointer; }
+.history-status { color: #75806e; }
+.history-status.success { color: #25804a; }
+.history-status.failed, .history-error { color: #b52f2f; }
+.history-error { margin: 0; overflow-wrap: anywhere; }
+.history-entry > button { justify-self: start; }

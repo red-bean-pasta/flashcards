@@ -15,13 +15,39 @@
   import { advancePractice, filterCards, hideAnswer, moveSession, previousQuestion, reconcileSession, startSession, updateSession } from './lib/session';
   import { createDeckLoader, loadTimeoutMessage } from './lib/deck-loader';
   import { DeckRequestError } from './lib/deck-client';
+  import HistoryPanel from './components/HistoryPanel.svelte';
+  import type { HistoryEntry } from './lib/history';
+  import { createMutationQueue, sourceSnapshot, type QueueActivity } from './lib/mutation-queue';
+  import type { StoredMutation } from './lib/mutation-storage';
+  import { captureOperation } from './lib/onedrive/operations';
+  import { projectRecoveredMutation } from './lib/mutation-projection';
 
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
   let selectedSource = $state('');
   let failure = $state<{ message: string; source: 'local-picker' | 'deck' } | null>(null);
   const networkError = $derived(failure?.message ?? '');
-  let dialogAction = $state<'add' | 'edit' | 'remove' | null>(null);
+  let dialogAction = $state<'add' | 'edit' | 'remove' | 'history' | null>(null);
+  let history = $state<HistoryEntry[]>([]);
+  let pendingItems = $state.raw<StoredMutation[]>([]);
+  let activeId = $state<string | null>(null);
+  let queueActivity = $state<QueueActivity>(null);
+  let matchedIds = $state.raw<string[]>([]);
+  let submitting = $state(0);
+  let queueProblem = $state('');
+  const pendingWrites = $derived(submitting + (activeId ? 1 : 0));
+  let blink = $state<'success' | 'failed' | null>(null);
+  let blinkTimer: ReturnType<typeof setTimeout> | undefined;
+  const hasFailures = $derived(!!queueProblem || history.some(entry => entry.status === 'failed') || pendingItems.some(item => item.review));
+  const historyEntries = $derived<HistoryEntry[]>([...pendingItems.map(item => ({
+    id: item.id, timestamp: new Date(item.createdAt), action: item.operation.action,
+    question: item.operation.action === 'remove' ? item.operation.original!.question : item.operation.replacement.question,
+    answer: item.operation.action === 'remove' ? item.operation.original!.answer : item.operation.replacement.answer,
+    status: !matchedIds.includes(item.id) ? 'disconnected' as const : item.review ? 'needs-review' as const : activeId === item.id ? queueActivity ?? 'applying' : item.retryAt ? 'waiting' as const : 'queued' as const,
+    error: item.error, retryAt: item.retryAt, canDismiss: matchedIds.includes(item.id) && !activeId, canReview: matchedIds.includes(item.id) && !activeId && !item.retryBlocked,
+    source: item.operation.source, stage: item.stage, sourceBefore: item.sourceWrite?.before, sourceAfter: item.sourceWrite?.after,
+    archiveBefore: item.archiveWrite?.before, archiveAfter: item.archiveWrite?.after,
+  })), ...history.filter(entry => !pendingItems.some(item => item.id === entry.id))].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
   let loading = $state(true);
   let storageActivity = $state<'connecting' | 'working' | null>(lastProvider() === 'onedrive' || new URLSearchParams(window.location.search).has('code') || new URLSearchParams(window.location.search).has('error') ? 'connecting' : null);
   const storageBusy = $derived(storageActivity !== null);
@@ -37,7 +63,7 @@
   const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
     ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
     : Math.min(viewportWidth, viewportHeight * .4)));
-  const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit');
+  const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit' || dialogAction === 'history');
 
   function openCardPanel(action: 'add' | 'edit') {
     dialogAction = action;
@@ -52,7 +78,7 @@
     addWidth = Math.min(75, Math.max(viewportHeight * .4 / viewportWidth * 100, (viewportWidth - clientX) / viewportWidth * 100));
   }
 
-  let backend = $state<DeckBackend | undefined>();
+  let backend = $state.raw<DeckBackend | undefined>();
   let readOnly = $state(false);
   let folderName = $state('');
   let provider = $state<'local' | 'onedrive' | null>(null);
@@ -67,6 +93,27 @@
   let folderInput: HTMLInputElement;
   let rememberedFolder = $state<AccessibleDirectory>();
   let restoreAttempt = 0;
+  const queue = createMutationQueue({
+    onChange: (items, active, activity, matched) => {
+      if (!blink && items.some(item => item.review && !pendingItems.some(previous => previous.id === item.id && previous.review))) {
+        blink = 'failed';
+        blinkTimer = setTimeout(() => { blink = null; }, 1600);
+      }
+      pendingItems = items; activeId = active; queueActivity = activity; matchedIds = matched;
+    },
+    onError: error => { console.error(error); queueProblem = error instanceof Error ? error.message : String(error); },
+    deck: () => $state.snapshot(deck),
+    onComplete: async (item, next, resumed, startedAt) => {
+      if (!backend) throw new DeckRequestError('Reconnect the original folder to complete this change.');
+      const updated = projectRecoveredMutation(deck, item, next, !resumed && startedAt === 'releasing' ? 'source-writing' : startedAt);
+      session = updateSession(session, filterCards(updated.cards, selectedSource));
+      deck = updated;
+      history = [{ id: item.id, timestamp: new Date(item.createdAt), action: item.operation.action,
+        question: item.operation.action === 'remove' ? item.operation.original!.question : item.operation.replacement.question,
+        answer: item.operation.action === 'remove' ? item.operation.original!.answer : item.operation.replacement.answer, status: 'success' }, ...history.filter(entry => entry.id !== item.id)];
+      if (!blink) { blink = 'success'; blinkTimer = setTimeout(() => { blink = null; }, 1600); }
+    },
+  });
 
   function showWriteNotice() {
     writeNotice = true;
@@ -75,6 +122,7 @@
   }
 
   function setBackend(next: DeckBackend, readonly: boolean, name: string, source: 'local' | 'onedrive') {
+    queue.setBackend(undefined);
     if (source === 'local') oneDrive.clearActionError();
     restoreAttempt++;
     rememberProvider(source);
@@ -119,13 +167,21 @@
   }
 
   async function saveCard(request: MutationRequest) {
-    if (loading || storageBusy) throw new Error('Cannot save while the card source is busy.');
-    if (!backend) throw new Error('Saving requires a connected card source.');
-    const savingBackend = backend;
-    const next = await savingBackend.mutate(request, deck);
-    if (backend !== savingBackend) throw new Error('Card source changed during an active mutation.');
-    session = updateSession(session, filterCards(next.cards, selectedSource));
-    deck = next;
+    if (loading || storageBusy || !backend) throw new Error('Cannot save without an available card source.');
+    if (!backend.persistent) throw new Error('The selected card source cannot persist changes.');
+    const snapshot = structuredClone(sourceSnapshot($state.snapshot(deck), request.source));
+    const operation = captureOperation(snapshot, request);
+    const target = operation.original;
+    const entry: HistoryEntry = {
+      id: crypto.randomUUID(), timestamp: new Date(), action: request.action,
+      question: request.action === 'remove' ? target!.question : request.question,
+      answer: request.action === 'remove' ? target!.answer : request.answer, status: 'applying',
+    };
+    const item: StoredMutation = { id: entry.id, createdAt: entry.timestamp.getTime(), destination: backend.persistent.destination,
+      request: { ...request }, operation, snapshot: sourceSnapshot(snapshot, request.source), stage: 'queued', attempts: 0 };
+    submitting++;
+    try { await queue.enqueue(item); }
+    finally { submitting--; }
   }
 
   function mountLoader(request?: (signal: AbortSignal) => Promise<DeckState>) {
@@ -134,9 +190,9 @@
     const load = request ?? (currentBackend ? (signal: AbortSignal) => currentBackend.load(signal) : undefined);
     if (!load) { loading = false; loader = undefined; return; }
     loader = createDeckLoader({
-      onDeck: applyDeck,
+      onDeck: next => { applyDeck(next); if (currentBackend === backend && !next.errors.length) queue.setBackend(currentBackend); },
       onError: message => { if (message) failure = { message, source: 'deck' }; else if (failure?.source === 'deck') failure = null; },
-      onLoading: value => { loading = value; },
+      onLoading: value => { loading = value; if (value) queue.setBackend(undefined); },
     }, load);
     void loader.refresh();
   }
@@ -221,7 +277,7 @@
     if (event.key === 'Escape' && switchOpen) { switchOpen = false; return; }
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (switchingOneDrive || dialogAction || event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea') || blocked || !current) return;
+    if (switchingOneDrive || (dialogAction && dialogAction !== 'history') || event.altKey || event.ctrlKey || event.metaKey || target.closest('button, select, input, a, textarea, summary') || blocked || !current) return;
     if (event.code === 'Space') { event.preventDefault(); performAction(); }
     if (event.key === 'ArrowRight') move(1);
     if (event.key === 'ArrowLeft') showPrevious();
@@ -234,6 +290,8 @@
   }
 
   onMount(() => {
+    void queue.refresh().catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
+    window.addEventListener('online', queue.wake);
     if (lastProvider() === 'local') { choosingStorage = true; if ('showDirectoryPicker' in window) void restoreLocal(); }
     pickerWidth = defaultPanelWidth('--file-selector-default-width-ratio');
     addWidth = defaultPanelWidth('--card-panel-default-width-ratio');
@@ -247,7 +305,7 @@
     } else {
       mountLoader();
     }
-    return () => { loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); };
+    return () => { queue.close(); window.removeEventListener('online', queue.wake); loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); clearTimeout(blinkTimer); };
   });
 </script>
 
@@ -256,10 +314,11 @@
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
   <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
+    managedOperations={pendingItems.map(item => item.id)}
     onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
     onActivity={value => { storageActivity = value; }} onPickerChange={value => { pickerOpen = value; }}
     {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width', String(value)); }}
-    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !dialogAction} />
+    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !dialogAction && !pendingWrites} />
   {#if backend}
     <aside class="storage-connection" aria-label="Card storage">
       <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
@@ -271,8 +330,8 @@
         </div>
       {:else}
         <div class="storage-actions" transition:fade={{ duration: 150 }}>
-          <button class="text-action" disabled={loading || storageBusy || !!dialogAction} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
-          <button class="text-action" disabled={loading || storageBusy || !!dialogAction} onclick={() => provider === 'local' ? connectLocal() : oneDrive.openPicker()}>{folderName}</button>
+          <button class="text-action" disabled={loading || storageBusy || !!dialogAction || !!pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
+          <button class="text-action" disabled={loading || storageBusy || !!dialogAction || !!pendingWrites} onclick={() => provider === 'local' ? connectLocal() : oneDrive.openPicker()}>{folderName}</button>
         </div>
       {/if}
       </div>
@@ -335,7 +394,8 @@
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => { if (readOnly) showWriteNotice(); else dialogAction = 'remove'; }}>Remove</button>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!dialogAction} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
-            <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction} onclick={refresh}>Refresh</button>
+            <button class="text-action" disabled={loading || storageBusy || !backend || !!dialogAction || !!pendingWrites} onclick={refresh}>Refresh</button>
+            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!dialogAction} onclick={() => { dialogAction = 'history'; }}>History</button>
             </div>
           {/if}
         </nav>
@@ -343,7 +403,14 @@
     </div>
   </div>
 
-  {#if dialogAction}
+  {#if dialogAction === 'history'}
+    <HistoryPanel history={historyEntries} problem={queueProblem} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={closeCardPanel} onReview={id => {
+      void queue.reviewAgain(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
+    }} onDismiss={id => {
+      if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
+      else history = history.filter(entry => entry.id !== id);
+    }} />
+  {:else if dialogAction}
     <CardDialog action={dialogAction} card={current} {deck} {selectedSource}
       onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={closeCardPanel} />
   {/if}

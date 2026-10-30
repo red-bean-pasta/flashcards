@@ -203,6 +203,11 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
   }
 
   return {
+    async driveId(): Promise<string> {
+      const value = await responseJson(await request(`${BASE}/me/drive`), false);
+      if (!isRecord(value) || typeof value.id !== 'string' || !value.id) throw invalidResponse(false);
+      return value.id;
+    },
     root: async () => requireFolder(await itemRequest(`${BASE}/me/drive/root`)),
     getItem,
     children,

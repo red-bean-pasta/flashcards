@@ -9,10 +9,10 @@
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
 
-  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
+  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true, managedOperations = [] }: {
     onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
     pickerWidth: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
-    active?: 'local' | 'onedrive'; canSwitch?: boolean;
+    active?: 'local' | 'onedrive'; canSwitch?: boolean; managedOperations?: string[];
   } = $props();
   const clientId = import.meta.env.VITE_ONEDRIVE_CLIENT_ID as string | undefined;
   let auth = $state<OneDriveAuth | undefined>();
@@ -276,7 +276,7 @@
     {#if auth}<button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>{/if}
     {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>{/if}
   {/if}
-  {#if recovery && active === 'onedrive'}
+  {#if recovery && active === 'onedrive' && !managedOperations.includes(recovery.id)}
     <section class="pending-save" aria-label="Pending OneDrive save">
       <p role="status">A pending {recovery.action} in {recovery.source} needs review. Further saves are paused.</p>
       <button class="text-action" disabled={busy || !canSwitch} onclick={() => { recoveryOpen = !recoveryOpen; }}>Review pending save</button>

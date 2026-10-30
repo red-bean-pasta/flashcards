@@ -54,7 +54,7 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
     return result;
   }
 
-  function prepareSession(folder: GraphItem, store: OneDriveStore, recovery: PendingOperation | null): FolderSession {
+  function prepareSession(folder: GraphItem, driveId: string, store: OneDriveStore, recovery: PendingOperation | null): FolderSession {
     const session: FolderSession = {
       store,
       state: {
@@ -62,6 +62,11 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
         backend: {
           load: signal => store.load(signal),
           mutate: (request, snapshot) => inspectAfter(session, () => store.mutate(request, snapshot)),
+          persistent: {
+            destination: { provider: 'onedrive', driveId, folderId: folder.id },
+            execute: (item, checkpoint) => inspectAfter(session, () => store.execute(item, checkpoint)),
+            discard: id => inspectAfter(session, () => store.discard(id)),
+          },
         },
       },
     };
@@ -72,8 +77,9 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
     const store = createOneDriveStore(graph, folder);
     const recovery = await store.pending();
     const root = await graph.root();
+    const driveId = await graph.driveId();
     memory.remember(folder.id, root.id);
-    const session = prepareSession(folder, store, recovery);
+    const session = prepareSession(folder, driveId, store, recovery);
     current = session;
     onChange(session.state);
   }

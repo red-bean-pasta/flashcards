@@ -16,6 +16,16 @@ export function samePair(a: Pair, b: Pair): boolean {
   return a.question === b.question && a.answer === b.answer;
 }
 
+export function normalizedPair(pair: Pair): Pair {
+  const normalize = (text: string) => text.trim().replace(/\r\n?/g, '\n');
+  return { question: normalize(pair.question), answer: normalize(pair.answer) };
+}
+
+/** An unchanged edit has no storage effect and needs no recovery journal. */
+export function isUnchangedEdit(operation: CardOperation): boolean {
+  return operation.action === 'edit' && operation.original !== undefined && samePair(operation.original, normalizedPair(operation.replacement));
+}
+
 export function validateSource(source: string): void {
   if (!source || source.includes('\\') || source.includes('\0') || source.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.')) ||
       !/\.md$/i.test(source) || source.split('/').at(-1)!.toLowerCase() === archiveFilename) {
