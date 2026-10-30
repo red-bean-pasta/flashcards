@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CardParseError, parseCardRanges, parseCards } from '../server/parser.js';
+import { CardParseError, parseCardRanges } from '../src/lib/card-ranges.js';
+import { parseBrowserCards } from '../src/lib/browser-cards.js';
+const parseCards = (text: string, source: string) => parseBrowserCards(text, source, value => value);
 
 test('plain ranges preserve raw spans and normalize card text across line endings', () => {
   for (const eol of ['\n', '\r\n', '\r']) {
@@ -16,7 +18,7 @@ test('plain ranges preserve raw spans and normalize card text across line ending
     assert.equal(text.slice(ranges[0].start, ranges[0].end), first);
     const cards = parseCards(text, 'deck.md');
     assert.equal(cards[0].question, ranges[0].content.question);
-    assert.equal(cards[0].answerHtml, '<p><strong>A</strong></p>\n');
+    assert.equal(cards[0].answerHtml, '**A**');
     assert.equal(cards[0].source, 'deck.md');
     assert.equal(cards[0].line, 3);
   }

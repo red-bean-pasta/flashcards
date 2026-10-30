@@ -26,13 +26,7 @@ This installs the project’s dependencies in `node_modules/`.
 
 3. **Add your cards.**
 
-Create a folder for your materials:
-
-```sh
-mkdir -p materials
-```
-
-Then create `materials/practice.md` with these sample cards:
+Create a Markdown file in a local or OneDrive folder with these sample cards:
 
 ```md
 # question
@@ -52,17 +46,7 @@ I'm **an avid reader**.
 
 `# question` and `# answer` are the headings Flashcards uses to identify your pairs. They are case insensitive, and each needs some content under it. You can use lists, quotes, code blocks, and deeper headings (`##` and below) in your questions and answers.
 
-You can keep multiple Markdown files in `materials/`, including subfolders. You can practice them all together or choose a single file in the app.
-
-If any file has a formatting error when loaded, practice shows you where to fix it. Fix and save the file, then refresh the browser.
-
-> The `---` line is **optional**; you can use it to separate cards visually.
-
-> Edits made on materials requires refreshing to load changes.
-
-> `materials/`, its subfolders, and individual Markdown files may be symbolic links. 
-
-> Only files whose name ends in `.md` (case-insensitive) are loaded; other files are skipped.
+You can keep multiple Markdown files in the selected folder, including subfolders. Only `.md` files are loaded. If a file has a formatting error, fix it and refresh. The `---` line is optional.
 
 4. **Start the app.**
 
@@ -70,27 +54,11 @@ If any file has a formatting error when loaded, practice shows you where to fix 
 npm run dev
 ```
 
-If you already have cards in another folder, you can point Flashcards to it:
+Open [localhost:3000](http://localhost:3000) and choose a local folder or OneDrive. See the sections below for browser support and OneDrive setup.
 
-```sh
-MATERIALS_DIR=/path/to/cards npm run dev
-```
-
-5. **Start practicing.**
-
-Open [127.0.0.1:5173](http://127.0.0.1:5173).
-
-You can reveal an answer, hide it again, move to the next question, or revisit the previous one. Each card shows its source file and line number so you can find it in your notes. The material selector lets you choose what to practice, and a subtle bottom strip shows how much of the shuffled round remains.
-
-Use **Add**, **Remove**, and **Edit** at the bottom-right to change cards. Add offers filtered file suggestions and always includes **Default** (`default.md`). Enter a new name to create a `file_name.md` file. Edit keeps your place and answer visibility; Remove asks for confirmation and archives the exact entry in `removed.md`, which is excluded from practice. In-app changes update the current round immediately; additions join its end when they match the current filter.
-
-Each browser page holds its own snapshot. If another page or editor changes a destination file, saving reports a conflict and retains the dialog text. Copy any unsaved text before refreshing, since refresh starts a new shuffled round. No identifiers are embedded in your Markdown. Writes preserve symbolic links and untouched file content. Run one server per materials folder; revision checks do not lock out unrelated editors during the brief write operation.
-
-Removal uses a `.flashcards-removal.json` recovery journal in the materials folder. If interrupted, the server completes the pending removal on the next read, write, or startup. If recovery detects conflicting external edits, it fails explicitly and retains the journal for manual recovery; keep that file until the source and archive have been checked. This protects against interrupted application writes, but does not promise durability through a power loss.
+Use **Add**, **Remove**, and **Edit** to change cards. Remove archives entries in `removed.md`, which is excluded from practice. External changes appear after Refresh.
 
 Press **Space** to reveal or advance, **←** to revisit, and **→** to advance.
-
-> The server defaults to `127.0.0.1:5173`; set `HOST` and `PORT` to change it.
 
 > For appearance tweaks, see the variables at the top of [src/style.css](src/style.css). The file selector and shared Add/Edit panel default widths are viewport ratios; a saved file-selector width takes precedence, and panel minimums still apply.
 
@@ -100,11 +68,11 @@ The browser can connect directly to OneDrive Personal, without a card server. It
 
 To enable the connection:
 
-1. Register a Microsoft application that supports **personal Microsoft accounts**. Add a **Single-page application** redirect URI matching the exact site URL, including its path and trailing slash. For `npm run dev:web`, use `http://localhost:5173/`. Do not create or embed a client secret.
-2. Copy `.env.example` to `.env.local`, set its public `VITE_ONEDRIVE_CLIENT_ID`, and leave `VITE_DEFAULT_STORAGE=onedrive` for the browser-only version. The browser requests delegated `Files.ReadWrite` so you can select existing folders; this permission reaches beyond the folder you select. Tokens and the PKCE state stay in `sessionStorage`, and the app requires reconnection when Microsoft expires/rejects the session.
-3. Run `npm run dev:web`. For static hosting, run `npm run build` and serve `dist/` over HTTPS. Register that site's exact URL too, and rebuild when changing Vite configuration. `npm run preview:web` previews the build locally; register its actual URL if testing sign-in there. A deployment under a subpath needs Vite's matching `base`.
+1. Register a Microsoft application that supports **personal Microsoft accounts**. Add a **Single-page application** redirect URI matching the exact site URL, including its path and trailing slash. For `npm run dev`, use `http://localhost:3000/`. Do not create or embed a client secret.
+2. Copy `.env.example` to `.env.local`, set its public `VITE_ONEDRIVE_CLIENT_ID`. The browser requests delegated `Files.ReadWrite` so you can select existing folders; this permission reaches beyond the folder you select. Tokens and the PKCE state stay in `sessionStorage`, and the app requires reconnection when Microsoft expires/rejects the session.
+3. Run `npm run dev`. For static hosting, run `npm run build` and serve `dist/` over HTTPS. Register that site's exact URL too, and rebuild when changing Vite configuration. `npm run preview:web` previews the build locally; register its actual URL if testing sign-in there. A deployment under a subpath needs Vite's matching `base`.
 
-Without `VITE_DEFAULT_STORAGE=onedrive`, the existing local Node workflow remains the initial source and **Connect OneDrive** is available when a client ID is configured. Microsoft authorization codes, tokens, upload/download URLs, and your Markdown are never sent to the static host. Notes are read directly from Microsoft. Session credentials are accessible to scripts on the site's origin; serve the app from a trusted origin. Closing the session ends stored sign-in; this release has no offline write queue or persistent local deck.
+Microsoft authorization codes, tokens, upload/download URLs, and your Markdown are never sent to the static host. Notes are read directly from Microsoft. Session credentials are accessible to scripts on the site's origin; serve the app from a trusted origin. Closing the session ends stored sign-in; this release has no offline write queue or persistent local deck.
 
 OneDrive saves use conditional replacement of existing file IDs. An explicit stale-write rejection rereads the latest file and retries an Add/Edit operation a bounded number of times, preserving other remote content. Edit/Remove match the original parsed question-and-answer pair and affect **every identical occurrence in the selected file only**. Pair comparison normalizes line endings and trims surrounding whitespace; internal whitespace and Markdown differences remain significant. A changed/removed original retains your draft and reports a conflict. Other providers, Business accounts, collaborative offline editing, and persistent Markdown IDs are outside this implementation.
 
@@ -118,6 +86,12 @@ Application registration and real-account browser sign-in are separate from the 
 
 ## Browser local folders
 
-Run `npm run dev:web -- --port 3000 --strictPort`, open `http://localhost:3000`, and choose a local folder. The browser asks for read/write access; Markdown files in that folder and its subfolders become the deck. Supported Chromium browsers use the File System Access API for reading and writing. Firefox and Safari use the native folder input for read-only access; Add, Edit, and Remove are unavailable, and Refresh asks you to select the folder again to obtain updated files. Re-select the folder after reloading in any browser.
+Run `npm run dev`, open `http://localhost:3000`, and choose a local folder. The browser asks for read/write access; Markdown files in that folder and its subfolders become the deck. Supported Chromium browsers use the File System Access API for reading and writing. Firefox and Safari use the native folder input for read-only access; Add, Edit, and Remove are unavailable, and Refresh asks you to select the folder again to obtain updated files. Re-select the folder after reloading in any browser.
 
 Edits affect every matching question/answer pair in the selected file. Removed entries are appended to `removed.md` before the source is changed. These are separate writes without a recovery journal or an atomic lock against other editors. If a save fails, inspect both files before retrying; concurrent edits can still race with a save.
+
+## Public hosting and limits
+
+Serve the built static files over HTTPS on a dedicated origin that hosts no untrusted apps or scripts. Scripts on that origin can access saved local folder handles and session credentials. Configure your web server to set a Content Security Policy appropriate for Microsoft sign-in and the OneDrive picker, `X-Content-Type-Options: nosniff`, a restrictive frame policy, and rate limits. Test the policy against sign-in and folder selection before use. External images in Markdown contact their hosts.
+
+Folder loads limit entries to 2,000, depth to 32, each Markdown file to 5 MiB and total Markdown content to 50 MiB. Choose a smaller folder if a limit is reached. OneDrive size is checked after download; these limits do not fully bound network traffic or server-side bandwidth.

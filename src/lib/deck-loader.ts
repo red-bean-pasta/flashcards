@@ -1,4 +1,4 @@
-import { DeckRequestError, fetchDeck } from './deck-client';
+import { DeckRequestError } from './deck-client';
 import type { DeckState } from './types';
 
 export const loadTimeoutMessage = 'Loading took longer than one minute. Choose a smaller folder or retry.';
@@ -9,7 +9,7 @@ type LoaderCallbacks = {
   onLoading(loading: boolean): void;
 };
 
-export function createDeckLoader(callbacks: LoaderCallbacks, request: (signal: AbortSignal) => Promise<DeckState> = () => fetchDeck(), timeoutMs = 60_000) {
+export function createDeckLoader(callbacks: LoaderCallbacks, request: (signal: AbortSignal) => Promise<DeckState>, timeoutMs = 60_000) {
   let revision = 0;
   let closed = false;
   let controller: AbortController | undefined;

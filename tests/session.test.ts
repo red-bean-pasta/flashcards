@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { advancePractice, hideAnswer, previousQuestion, startSession, reconcileSession, moveSession, updateSession } from '../src/lib/session.ts';
-import { parseCards } from '../server/parser.ts';
+import { parseBrowserCards } from '../src/lib/browser-cards.ts';
+const parseCards = (text: string, source: string) => parseBrowserCards(text, source, value => value);
 
 const cards = parseCards('# question\nOne\n# answer\nA\n# question\nTwo\n# answer\nB', 'session.md');
 

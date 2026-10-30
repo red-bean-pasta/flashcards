@@ -1,3 +1,4 @@
+import { createLoadBudget } from './load-budget.js';
 import { archiveFilename } from './card-text.js';
 import { CardParseError } from './card-ranges.js';
 import { parseBrowserCards } from './browser-cards.js';
@@ -16,12 +17,15 @@ export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parse
   });
   return {
     async load(signal?: AbortSignal): Promise<DeckState> {
+      const budget = createLoadBudget();
       const cards: DeckState['cards'] = [];
       const errors: string[] = [];
       const revisions: Record<string, string> = {};
       for (const file of selected) {
         signal?.throwIfAborted();
         const source = file.webkitRelativePath.split('/').slice(1).join('/');
+        budget.entry(source);
+        budget.file(source, file.size);
         try { cards.push(...parse(await file.text(), source)); }
         catch (error) {
           if (error instanceof CardParseError) errors.push(error.message);

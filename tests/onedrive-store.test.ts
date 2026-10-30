@@ -68,6 +68,7 @@ function fixture() {
   };
   const store = () => createOneDriveStore(graph, folder, parse);
   return { graph, folder, hooks, committed, store, put,
+    move: (id: string, parent: string) => { requireNode(id).parent = parent; requireNode(id).item.parentReference = { id: parent }; },
     text: (parent: string, name: string) => child(parent, name)?.text,
   };
 }
@@ -265,4 +266,15 @@ test('nested source cards remain editable through the durable operation journal'
   assert.equal(f.text(nested.id, 'deck.md'), entry('Changed', 'New'));
   assert.equal(updated.cards[0].question, 'Changed');
   assert.equal(await store.pending(), null);
+});
+
+
+test('refuses to edit a source moved out of the selected folder', async () => {
+  const f = fixture();
+  const item = f.put('root', 'deck.md', entry('Original'));
+  const store = f.store();
+  const deck = await store.load();
+  f.move(item.id, 'elsewhere');
+  await assert.rejects(store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'Changed', answer: 'Answer' }, deck), /moved, renamed, or replaced/);
+  assert.equal(f.text('elsewhere', 'deck.md'), entry('Original'));
 });

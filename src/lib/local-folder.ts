@@ -1,3 +1,4 @@
+import { createLoadBudget } from './load-budget.js';
 import { archiveFilename, isNewSourceName, appendArchivedEntries } from './card-text.js';
 import { CardParseError } from './card-ranges.js';
 import { CardInputError } from './card-text.js';
@@ -23,12 +24,13 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
   const project = createOperationProjector(parse);
   let saving = false;
 
-  async function scan(directory: Directory, found: Map<string, FileSystemFileHandle>, signal?: AbortSignal, prefix = ''): Promise<void> {
+  async function scan(directory: Directory, found: Map<string, FileSystemFileHandle>, signal?: AbortSignal, prefix = '', budget = createLoadBudget()): Promise<void> {
     for await (const entry of directory.values()) {
       signal?.throwIfAborted();
       if (entry.name.startsWith('.') || entry.name.toLowerCase() === archiveFilename) continue;
       const path = prefix + entry.name;
-      if (entry.kind === 'directory') await scan(entry as Directory, found, signal, path + '/');
+      budget.entry(path);
+      if (entry.kind === 'directory') await scan(entry as Directory, found, signal, path + '/', budget);
       else if (/\.md$/i.test(entry.name)) found.set(path, entry as FileSystemFileHandle);
     }
   }
@@ -36,13 +38,15 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
   async function load(signal?: AbortSignal): Promise<DeckState> {
     try {
       const found = new Map<string, FileSystemFileHandle>();
-      await scan(root, found, signal);
+      const budget = createLoadBudget();
+      await scan(root, found, signal, '', budget);
       const cards: DeckState['cards'] = [];
       const revisions: Record<string, string> = {};
       const errors: string[] = [];
       for (const [source, handle] of found) {
         signal?.throwIfAborted();
         const file = await handle.getFile();
+        budget.file(source, file.size);
         try { cards.push(...parse(await file.text(), source)); }
         catch (error) { if (!(error instanceof CardParseError)) throw error; errors.push(error.message); }
         revisions[source] = `${file.lastModified}:${file.size}`;

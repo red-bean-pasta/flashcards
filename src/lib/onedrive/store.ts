@@ -1,3 +1,4 @@
+import { createLoadBudget } from '../load-budget.js';
 import { archiveFilename, isNewSourceName, appendArchivedEntries } from '../card-text.js';
 import { CardParseError } from '../card-ranges.js';
 import { CardInputError } from '../card-text.js';
@@ -23,15 +24,16 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   const journal = createOperationJournal(graph, folder.id);
   let saving = false;
 
-  async function scan(id: string, found: Map<string, GraphItem>, signal?: AbortSignal, prefix = '', ancestors = new Set<string>()): Promise<void> {
+  async function scan(id: string, found: Map<string, GraphItem>, signal?: AbortSignal, prefix = '', ancestors = new Set<string>(), budget = createLoadBudget()): Promise<void> {
     signal?.throwIfAborted();
     if (ancestors.has(id)) throw new DeckRequestError('OneDrive returned a recursive folder.');
     const nextAncestors = new Set([...ancestors, id]);
-    for (const item of await graph.children(id)) {
+    for (const item of await graph.children(id, signal)) {
       signal?.throwIfAborted();
       if (item.name.startsWith('.') || item.name.toLowerCase() === archiveFilename) continue;
       const source = prefix + item.name;
-      if (item.folder) await scan(item.id, found, signal, source + '/', nextAncestors);
+      budget.entry(source);
+      if (item.folder) await scan(item.id, found, signal, source + '/', nextAncestors, budget);
       else if (item.file && /\.md$/i.test(item.name)) found.set(source, item);
     }
   }
@@ -39,14 +41,16 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   async function load(signal?: AbortSignal): Promise<DeckState> {
     try {
       const found = new Map<string, GraphItem>();
-      await scan(folder.id, found, signal);
+      const budget = createLoadBudget();
+      await scan(folder.id, found, signal, '', new Set(), budget);
       const cards: DeckState['cards'] = [];
       const errors: string[] = [];
       const revisions: Record<string, string> = {};
       for (const [source, item] of found) {
         signal?.throwIfAborted();
         try {
-          const snapshot = await graph.readText(item.id);
+          const snapshot = await graph.readText(item.id, signal);
+          budget.file(source, new TextEncoder().encode(snapshot.text).byteLength);
           cards.push(...parse(snapshot.text, source));
           revisions[source] = snapshot.revision;
         } catch (error) {
@@ -61,6 +65,18 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     } catch (error) { asDeckError(error); }
   }
 
+  async function validateSourcePath(path: string, expectedId: string): Promise<void> {
+    let parent = folder.id;
+    const parts = path.split('/');
+    for (let index = 0; index < parts.length; index++) {
+      const item = await graph.findChild(parent, parts[index]);
+      if (!item || item.name !== parts[index] || (index < parts.length - 1 ? !item.folder : !item.file || item.id !== expectedId)) {
+        throw new DeckRequestError(`The file ${path} was moved, renamed, or replaced. Refresh before saving.`);
+      }
+      parent = item.id;
+    }
+  }
+
   async function sourcePlan(operation: CardOperation): Promise<{ plan: WritePlan; removed: string }> {
     let item = sources.get(operation.source);
     if (!item) {
@@ -70,6 +86,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
       if (item && !item.file) throw new DeckRequestError('That name belongs to a folder. Choose another filename.');
       if (item) sources.set(operation.source, item);
     }
+    if (item) await validateSourcePath(operation.source, item.id);
     const before = item ? await graph.readText(item.id) : null;
     const change = planContent(before?.text ?? '', operation);
     return { plan: { id: item?.id ?? null, name: operation.source, before: before?.text ?? null, revision: before?.revision ?? null, after: change.text }, removed: change.removed };
@@ -95,6 +112,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
 
   async function performSource(pending: PendingOperation, operation: CardOperation): Promise<{ item: GraphItem; text: string }> {
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (pending.sourceWrite.id) await validateSourcePath(operation.source, pending.sourceWrite.id);
       await journal.update({ ...pending, stage: 'source-writing' });
       try { return { item: await publish(pending.sourceWrite), text: pending.sourceWrite.after }; }
       catch (error) {

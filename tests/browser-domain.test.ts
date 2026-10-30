@@ -3,23 +3,19 @@ import { test } from 'node:test';
 import { CardParseError, parseCardRanges } from '../src/lib/card-ranges.js';
 import { appendEntry, CardInputError, formatEntry } from '../src/lib/card-text.js';
 import { parseBrowserCards } from '../src/lib/browser-cards.js';
-import { parseCards } from '../server/parser.js';
 
-test('browser cards reuse Node card content and source lines with transient IDs', () => {
+test('browser cards preserve content and source lines with transient IDs', () => {
   const text = '---\n\n# question\n**Q**\n\n# answer\n```md\n# question\n```\n';
   const render = (markdown: string) => `rendered:${markdown}`;
   const first = parseBrowserCards(text, 'nested/deck.md', render);
   const second = parseBrowserCards(text, 'nested/deck.md', render);
-  const node = parseCards(text, 'nested/deck.md');
   assert.equal(first.length, 1);
-  for (const key of ['question', 'answer', 'line', 'source'] as const) {
-    assert.equal(first[0][key], node[0][key]);
-  }
+  assert.deepEqual({ question: first[0].question, answer: first[0].answer, line: first[0].line, source: first[0].source },
+    { question: '**Q**', answer: '```md\n# question\n```', line: 3, source: 'nested/deck.md' });
   assert.equal(first[0].questionHtml, 'rendered:**Q**');
   assert.equal(first[0].answerHtml, 'rendered:```md\n# question\n```');
   assert.match(first[0].id, /^[0-9a-f-]{36}$/);
   assert.notEqual(first[0].id, second[0].id);
-  assert.equal(parseCards(text, 'nested/deck.md')[0].id, node[0].id);
 });
 
 test('shared entry formatting retains requested line endings and fenced markers', () => {

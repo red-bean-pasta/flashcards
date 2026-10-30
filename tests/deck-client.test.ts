@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DeckRequestError, fetchDeck } from '../src/lib/deck-client.ts';
+import { DeckRequestError } from '../src/lib/deck-client.ts';
 import { createDeckLoader } from '../src/lib/deck-loader.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
@@ -24,23 +24,6 @@ test('snapshot loader requests data only on explicit refresh', async () => {
   await loader.refresh();
   assert.deepEqual(received.map(value => value.files[0]), ['initial.md', 'external.md']);
   loader.close();
-});
-
-test('HTTP, malformed JSON, invalid shapes and network failures are explicit request errors', async () => {
-  for (const response of [new Response('error', { status: 503 }), new Response('{'), Response.json({ cards: 'wrong' })]) {
-    await assert.rejects(fetchDeck(async () => response), DeckRequestError);
-  }
-  const cause = new TypeError('Network disconnected');
-  await assert.rejects(fetchDeck(async () => { throw cause; }), error => error instanceof DeckRequestError && error.cause === cause);
-  assert.deepEqual(await fetchDeck(async () => Response.json(deck)), deck);
-});
-
-test('unexpected transport errors and consumed-body contract failures propagate unchanged', async () => {
-  const failure = new Error('Unexpected transport bug');
-  await assert.rejects(fetchDeck(async () => { throw failure; }), error => error === failure);
-  const response = Response.json(deck);
-  await response.json();
-  await assert.rejects(fetchDeck(async () => response), error => error instanceof TypeError && !(error instanceof DeckRequestError));
 });
 
 test('loader recovers only request errors; reconciliation failures retain identity and cause', async () => {
@@ -119,14 +102,4 @@ test('refresh announces loading before requesting a snapshot, including every su
     assert.equal(loading, false);
   }
   assert.deepEqual(states, [true, false, true, false]);
-});
-
-test('mutation transport preserves explicit conflicts and rejects invalid success shapes', async () => {
-  const { submitMutation } = await import('../src/lib/deck-client.ts');
-  const request = { action: 'add' as const, source: 'default.md', revision: null, question: 'Q', answer: 'A' };
-  await assert.rejects(submitMutation(request, async () => Response.json({ error: 'Refresh first' }, { status: 409 })), /Refresh first/);
-  await assert.rejects(submitMutation(request, async () => Response.json({ source: 'wrong.md', revision: 'r', cards: [] })), /invalid save response/);
-  const bug = new Error('Internal transport defect', { cause: new Error('root cause') });
-  await assert.rejects(submitMutation(request, async () => { throw bug; }), error => error === bug);
-  await assert.rejects(submitMutation(request, async () => { throw new TypeError('offline'); }), /outcome is unknown/);
 });

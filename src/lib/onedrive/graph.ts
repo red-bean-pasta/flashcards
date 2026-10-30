@@ -167,13 +167,13 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return parseItem(await responseJson(response, write), write);
   }
 
-  async function getItem(id: string): Promise<GraphItem> {
-    const item = await itemRequest(`${BASE}/me/drive/items/${segment(id)}`);
+  async function getItem(id: string, signal?: AbortSignal): Promise<GraphItem> {
+    const item = await itemRequest(`${BASE}/me/drive/items/${segment(id)}`, { signal });
     if (item.id !== id) throw invalidResponse(false);
     return item;
   }
 
-  async function children(id: string): Promise<GraphItem[]> {
+  async function children(id: string, signal?: AbortSignal): Promise<GraphItem[]> {
     let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children`;
     const items: GraphItem[] = [];
     const visited = new Set<string>();
@@ -181,7 +181,7 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
       next = graphUrl(next);
       if (visited.has(next)) throw invalidResponse(false);
       visited.add(next);
-      const value = await responseJson(await request(next), false);
+      const value = await responseJson(await request(next, { signal }), false);
       if (!isRecord(value) || !Array.isArray(value.value)) throw invalidResponse(false);
       items.push(...value.value.map(item => parseItem(item)));
       const link = value['@odata.nextLink'];
@@ -191,12 +191,12 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return items;
   }
 
-  async function readText(id: string): Promise<{ id: string; text: string; revision: string }> {
+  async function readText(id: string, signal?: AbortSignal): Promise<{ id: string; text: string; revision: string }> {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const before = requireFile(await getItem(id));
-      const response = await request(downloadUrl(before.downloadUrl), {}, false);
+      const before = requireFile(await getItem(id, signal));
+      const response = await request(downloadUrl(before.downloadUrl), { signal }, false);
       const text = await downloadText(response);
-      const after = requireFile(await getItem(id));
+      const after = requireFile(await getItem(id, signal));
       if (before.eTag === after.eTag) return { id, text, revision: after.eTag };
     }
     throw new GraphError('OneDrive kept changing during the read. Refresh and try again.', { status: 409, code: 'unstableRead' });
