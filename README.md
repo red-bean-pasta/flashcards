@@ -78,6 +78,8 @@ Press **Space** to reveal or advance, **←** to revisit, and **→** to advance
 
 With Caddy installed and running, deploy from the project folder as a user with sudo access:
 
+> For OneDrive access, copy `.env.example` to `.env.local` in the project folder and set `VITE_ONEDRIVE_CLIENT_ID` to your application's ID before deploying. Add your deployed URL as a Single-page application redirect URI in your Microsoft app registration. The file is optional if you only use local folders.
+
 ```sh
 sudo ./deploy/setup.sh --domain flashcards.example.com
 ```
@@ -89,3 +91,5 @@ The script builds the app with Node.js 22.12+ and npm. For more options, run:
 ```
 
 > The deployed app is served from `/srv/flashcards/dist`. Its Caddy site configuration is stored at `/etc/caddy/conf.d/flashcards.caddy`.
+
+> To change the OneDrive client ID after deployment, edit `.env.local` in the source project folder and run the deployment command again. The value is included in the built app, so editing files under `/srv/flashcards` will not update it. If using `--skip-build`, rebuild the app before deploying.
