@@ -32,6 +32,7 @@ test('persistent picker validates initialization and handles repeated selections
     assert.equal(form.method, 'POST');
     assert.equal(form.target, env.frame.name);
     const options = JSON.parse(url.searchParams.get('filePicker')!);
+    assert.deepEqual(options.entry.oneDrive.files, { folder: 'Apps/Flashcards', fallbackToRoot: true });
     assert.equal(options.accessibility.trapFocusOnLoad, false);
     const channelId = options.messaging.channelId;
     const event = { origin: 'https://onedrive.live.com', source: env.source, data: { type: 'initialize', channelId }, ports: [env.port] };

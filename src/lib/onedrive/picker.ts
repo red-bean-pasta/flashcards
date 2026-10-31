@@ -6,7 +6,7 @@ export interface PickedFolder { id: string; driveId: string }
 
 function pickerOptions(channelId: string) {
   return {
-    sdk: '8.0', entry: { oneDrive: { files: {} } }, authentication: {},
+    sdk: '8.0', entry: { oneDrive: { files: { folder: 'Apps/Flashcards', fallbackToRoot: true } } }, authentication: {},
     messaging: { origin: location.origin, channelId },
     typesAndSources: { mode: 'folders', locations: { oneDrive: {} } },
     accessibility: { trapFocusOnLoad: false },

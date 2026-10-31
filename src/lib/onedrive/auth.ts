@@ -1,8 +1,8 @@
 /** Browser-only OAuth authorization-code flow for a personal OneDrive account. */
 const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
-const SCOPES = 'offline_access https://graph.microsoft.com/Files.ReadWrite.AppFolder';
-const PICKER_SCOPES = 'offline_access OneDrive.AppFolder';
-const CONNECTION_SCOPES = `${SCOPES} OneDrive.AppFolder`;
+const SCOPES = 'offline_access https://graph.microsoft.com/Files.ReadWrite';
+const PICKER_SCOPES = 'offline_access OneDrive.ReadWrite';
+const CONNECTION_SCOPES = `${SCOPES} OneDrive.ReadWrite`;
 const PENDING_LIFETIME_MS = 10 * 60 * 1000;
 
 export type OneDriveAuthErrorCode = 'configuration' | 'reconnect_required' | 'oauth' | 'network' | 'invalid_response' | 'storage';

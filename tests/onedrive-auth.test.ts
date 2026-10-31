@@ -32,7 +32,7 @@ test('personal-account sign-in uses S256 PKCE, state, delegated scopes and sessi
   assert.equal(new URL(s.navigate()).pathname, '/consumers/oauth2/v2.0/authorize');
   assert.equal(params.get('code_challenge_method'), 'S256');
   assert.equal(params.get('response_type'), 'code');
-  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite.AppFolder OneDrive.AppFolder');
+  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite OneDrive.ReadWrite');
   assert.equal(await s.auth.completeSignIn(), true);
   assert.equal(s.location.href, 'https://cards.example/app');
   const body = s.calls[0].body;
@@ -179,10 +179,10 @@ test('legacy broad-scope sessions are not reused', () => {
   assert.equal(s.auth.isConnected(), false);
 });
 
-test('picker token requests only OneDrive app-folder access', async () => {
+test('picker token requests OneDrive read-write access', async () => {
   const s = setup();
   await s.callback();
   await s.auth.completeSignIn();
   assert.equal(await s.auth.getPickerToken(), 'access');
-  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.AppFolder');
+  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
 });
