@@ -80,6 +80,27 @@
   }
 
   function updateViewport() { viewportWidth = window.innerWidth; viewportHeight = window.innerHeight; }
+  function alignStorageStatus(footer: HTMLElement) {
+    const shell = footer.closest<HTMLElement>('.shell')!;
+    const actions = footer.querySelector<HTMLElement>('.card-actions')!;
+    const collection = footer.querySelector<HTMLElement>('.collection')!;
+    const scroll = footer.closest<HTMLElement>('.practice-scroll')!;
+    function update() {
+      const bounds = footer.getBoundingClientRect();
+      const shellBounds = shell.getBoundingClientRect();
+      shell.style.setProperty('--status-left', `${bounds.left - shellBounds.left}px`);
+      shell.style.setProperty('--status-right', `${shellBounds.right - bounds.right}px`);
+      shell.style.setProperty('--status-bottom', `${shellBounds.bottom - bounds.top + 8}px`);
+      shell.classList.toggle('status-align-left', actions.getBoundingClientRect().bottom <= collection.getBoundingClientRect().top);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(footer);
+    observer.observe(actions);
+    observer.observe(collection);
+    scroll.addEventListener('scroll', update);
+    update();
+    return { destroy() { observer.disconnect(); scroll.removeEventListener('scroll', update); } };
+  }
   function resizeAdd(clientX: number) {
     addWidth = Math.min(75, Math.max(viewportHeight * .4 / viewportWidth * 100, (viewportWidth - clientX) / viewportWidth * 100));
   }
@@ -391,7 +412,7 @@
         {/if}
       </main>
 
-      <footer class="collection-footer">
+      <footer class="collection-footer" use:alignStorageStatus>
         <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
           bind:source={selectedSource} onChange={startRound} />
         <nav class="card-actions" aria-label="Manage cards">

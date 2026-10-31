@@ -23,6 +23,11 @@
   const folder = $derived(selected?.folder);
   let busy = $state(false);
   let actionError = $state('');
+  const previewParams = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
+  const previewError = previewParams?.get('preview') === 'error'
+    ? previewParams.get('error_message') ?? previewParams.get('error_messsage') ?? 'Could not connect to OneDrive. Please check your connection and try again.'
+    : null;
+  const displayedError = $derived(previewError ?? actionError);
   let redirecting = false;
   let pickerOpen = $state(false);
   type PickerSlot = { id: number; frame?: HTMLIFrameElement };
@@ -259,17 +264,26 @@
   });
 </script>
 
-<aside class="storage-connection onedrive-status" aria-label="OneDrive status" class:has-status={!!actionError}>
-  {#if actionError}
-    {#if actionError}<p role="alert" class="save-error">{actionError}</p>{/if}
-    {#if auth}<button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>{/if}
-    {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>{/if}
+<aside class="onedrive-status" aria-label="OneDrive status" class:has-status={!!displayedError}>
+  {#if displayedError}
+    <p role="alert" class="save-error">{displayedError}{#if auth || previewError !== null}{' '}<button class="error-action" disabled={!auth || busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>.{/if}{#if graph}{' '}<button class="error-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>.{/if}</p>
   {/if}
 </aside>
 
 <style>
   .onedrive-status:not(.has-status) { display: none; }
-  .onedrive-status.has-status { top: 3rem; right: auto; }
+  .onedrive-status.has-status {
+    position: absolute; z-index: 3;
+    right: var(--status-right);
+    bottom: var(--status-bottom);
+    width: max-content;
+    max-width: calc(100% - var(--status-left) - var(--status-right));
+    max-height: 40vh; overflow: auto;
+    font-size: .78rem; text-align: right; overflow-wrap: anywhere;
+  }
+  .onedrive-status p { margin: 0; }
+  .error-action { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; }
+  :global(.status-align-left) .onedrive-status.has-status { left: var(--status-left); right: auto; text-align: left; }
 
   .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
   .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }
