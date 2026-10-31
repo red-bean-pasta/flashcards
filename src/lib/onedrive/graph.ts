@@ -134,12 +134,31 @@ async function httpError(response: Response, write: boolean): Promise<GraphError
   return new GraphError(message, { status: response.status, code, retryAfter: response.headers.get('Retry-After') }, uncertain, bodyFailure ? { cause: bodyFailure } : undefined);
 }
 
-async function downloadText(response: Response): Promise<string> {
+async function downloadText(response: Response, maxBytes: number): Promise<string> {
   if (response.bodyUsed) throw new TypeError('The OneDrive download body was already consumed.');
-  try { return await response.text(); } catch (error) {
+  if (response.body === null) return '';
+  if (!response.body) throw new GraphError('This browser cannot stream OneDrive downloads safely.', { status: 0, code: 'streamUnavailable' });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new GraphError('OneDrive file exceeds the remaining download limit. Choose a smaller folder or file.', { status: 0, code: 'downloadLimit' });
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join('');
+  } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
     throw new GraphError('The OneDrive download was interrupted. Try refreshing.', { status: 0, code: 'networkError' }, false, { cause: error });
-  }
+  } finally { reader.releaseLock(); }
 }
 
 export function createGraphClient(getAccessToken: () => Promise<string>, fetcher: typeof fetch = fetch) {
@@ -173,16 +192,23 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return item;
   }
 
-  async function children(id: string, signal?: AbortSignal): Promise<GraphItem[]> {
+  async function children(id: string, signal?: AbortSignal, maxItems = 2000): Promise<GraphItem[]> {
     let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children`;
     const items: GraphItem[] = [];
     const visited = new Set<string>();
     while (next) {
       next = graphUrl(next);
       if (visited.has(next)) throw invalidResponse(false);
+      if (visited.size >= 2000) throw new GraphError('OneDrive folder listing has too many pages. Choose a smaller folder.', { status: 0, code: 'entryLimit' });
       visited.add(next);
-      const value = await responseJson(await request(next, { signal }), false);
+      const raw = await downloadText(await request(next, { signal }), 5 * 1024 * 1024);
+      let value: unknown;
+      try { value = JSON.parse(raw); } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw invalidResponse(false, error);
+      }
       if (!isRecord(value) || !Array.isArray(value.value)) throw invalidResponse(false);
+      if (value.value.length > maxItems - items.length) throw new GraphError('OneDrive folder contains too many entries. Choose a smaller folder.', { status: 0, code: 'entryLimit' });
       items.push(...value.value.map(item => parseItem(item)));
       const link = value['@odata.nextLink'];
       if (link !== undefined && (typeof link !== 'string' || !link)) throw invalidResponse(false);
@@ -191,11 +217,11 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return items;
   }
 
-  async function readText(id: string, signal?: AbortSignal): Promise<{ id: string; text: string; revision: string }> {
+  async function readText(id: string, signal?: AbortSignal, maxBytes = 50 * 1024 * 1024): Promise<{ id: string; text: string; revision: string }> {
     for (let attempt = 0; attempt < 3; attempt++) {
       const before = requireFile(await getItem(id, signal));
       const response = await request(downloadUrl(before.downloadUrl), { signal }, false);
-      const text = await downloadText(response);
+      const text = await downloadText(response, maxBytes);
       const after = requireFile(await getItem(id, signal));
       if (before.eTag === after.eTag) return { id, text, revision: after.eTag };
     }

@@ -34,6 +34,16 @@ export function isNewSourceName(source: string): boolean {
 }
 
 export function appendArchivedEntries(archive: string, removed: string): string {
+  const key = (pair: { question: string; answer: string }) => JSON.stringify([pair.question, pair.answer]);
+  const seen = new Set(parseCardRanges(archive, archiveFilename).map(range => key(range.content)));
+  const additions: string[] = [];
+  for (const range of parseCardRanges(removed, archiveFilename)) {
+    const value = key(range.content);
+    if (seen.has(value)) continue;
+    seen.add(value);
+    additions.push(removed.slice(range.start, range.end));
+  }
+  if (!additions.length) return archive;
   const eol = archive.match(/\r\n|\r|\n/)?.[0] ?? removed.match(/\r\n|\r|\n/)?.[0] ?? '\n';
-  return appendEntry(archive, removed, eol);
+  return appendEntry(archive, additions.join(''), eol);
 }

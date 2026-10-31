@@ -4,6 +4,8 @@ import { createLocalFolderBackend } from '../src/lib/local-folder.ts';
 import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { captureOperation } from '../src/lib/onedrive/operations.ts';
 import type { StoredMutation } from '../src/lib/mutation-storage.ts';
+import { retryDecision } from '../src/lib/mutation-retry.ts';
+import { RetryableLocalConflict } from '../src/lib/deck-client.ts';
 
 const entry = '# question\nOne\n\n# answer\nAnswer\n\n';
 function directory(name: string) {
@@ -18,8 +20,31 @@ function directory(name: string) {
 function file(name: string, initial: string) {
   let text = initial;
   return { kind: 'file', name, async getFile() { return { text: async () => text, lastModified: 1, size: text.length }; },
-    async createWritable() { let next = ''; return { async write(value: string) { next = value; }, async close() { text = next; } }; } };
+    async createWritable(_options?: { mode?: string }) { let next = ''; return { async write(value: string) { next = value; }, async close() { text = next; }, async abort() {} }; } };
 }
+
+test('local save requests exclusive access and checks contents after opening the stream', async () => {
+  const root = directory('root');
+  const note = file('notes.md', entry);
+  root.entries.set('notes.md', note);
+  const backend = createLocalFolderBackend(root as any, (text, source) => parseBrowserCards(text, source, value => value));
+  const deck = await backend.load();
+  const originalWritable = note.createWritable;
+  let mode: string | undefined;
+  let aborted = false;
+  note.createWritable = async options => {
+    mode = options?.mode;
+    const external = await originalWritable();
+    await external.write(entry + 'external change');
+    await external.close();
+    const stream = await originalWritable(options);
+    return { ...stream, async abort() { aborted = true; } };
+  };
+  await backend.mutate({ action: 'edit', source: 'notes.md', index: 0, revision: deck.revisions['notes.md'], question: 'Changed', answer: 'Answer' }, deck);
+  assert.equal(mode, 'exclusive');
+  assert.equal(aborted, true);
+  assert.equal(await (await note.getFile()).text(), entry + 'external change');
+});
 
 test('local folder scans nested notes and archives removal', async () => {
   const root = directory('root');
@@ -34,6 +59,81 @@ test('local folder scans nested notes and archives removal', async () => {
   assert.equal(next.cards.length, 0);
   assert.match(await (await root.entries.get('removed.md').getFile()).text(), /One/);
   assert.equal(await (await nested.entries.get('notes.md').getFile()).text(), '');
+});
+
+test('local add replans after a concurrent edit and preserves it', async () => {
+  const root = directory('root');
+  const note = file('notes.md', entry);
+  root.entries.set('notes.md', note);
+  const backend = createLocalFolderBackend(root as any, (text, source) => parseBrowserCards(text, source, value => value));
+  const deck = await backend.load();
+  const original = note.createWritable;
+  let raced = false;
+  note.createWritable = async options => {
+    if (!raced) {
+      raced = true;
+      const other = await original();
+      await other.write(entry + '# question\nExternal\n\n# answer\nAnswer\n\n');
+      await other.close();
+    }
+    return original(options);
+  };
+  const request = { action: 'add' as const, source: 'notes.md', revision: deck.revisions['notes.md'], question: 'Mine', answer: 'Answer' };
+  const item: StoredMutation = { id: 'local-replan', createdAt: 1, destination: { provider: 'local', folder: root as any }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  let preparations = 0;
+  await backend.persistent.execute(item, async value => {
+    if (value.stage === 'preparing') {
+      preparations++;
+      assert.equal(value.sourceWrite, undefined);
+      assert.equal(value.archiveWrite, undefined);
+    }
+  });
+  assert.equal(preparations, 2);
+  assert.equal(await (await note.getFile()).text(), entry + '# question\nExternal\n\n# answer\nAnswer\n\n# question\nMine\n\n# answer\nAnswer\n\n');
+});
+
+test('repeated local conflicts are retryable and the queued change can resume', async () => {
+  const root = directory('root');
+  const note = file('notes.md', entry);
+  root.entries.set('notes.md', note);
+  const backend = createLocalFolderBackend(root as any, (text, source) => parseBrowserCards(text, source, value => value));
+  const deck = await backend.load();
+  const request = { action: 'add' as const, source: 'notes.md', revision: deck.revisions['notes.md'], question: 'Mine', answer: 'Answer' };
+  const item: StoredMutation = { id: 'conflicts', createdAt: 1, destination: { provider: 'local', folder: root as any }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  const original = note.createWritable;
+  let conflicts = 0;
+  note.createWritable = async options => {
+    if (conflicts < 3) {
+      conflicts++;
+      const other = await original();
+      await other.write(await (await note.getFile()).text() + `# question\nExternal ${conflicts}\n\n# answer\nAnswer\n\n`);
+      await other.close();
+    }
+    return original(options);
+  };
+  let failure: unknown;
+  try { await backend.persistent.execute(item, async () => {}); }
+  catch (error) { failure = error; }
+  assert.ok(failure instanceof RetryableLocalConflict);
+  assert.equal(retryDecision(failure, 0, 1000, 0).kind, 'retry');
+  await backend.persistent.execute(item, async () => {}, true);
+  const contents = await (await note.getFile()).text();
+  assert.match(contents, /External 3/);
+  assert.equal((contents.match(/# question\nMine\n/g) ?? []).length, 1);
+});
+
+test('local removal does not append a card already present in the archive', async () => {
+  const root = directory('root');
+  const note = file('notes.md', entry + entry);
+  const archive = file('removed.md', entry);
+  archive.createWritable = async () => { throw new Error('Archive should not be rewritten'); };
+  root.entries.set('notes.md', note);
+  root.entries.set('removed.md', archive);
+  const backend = createLocalFolderBackend(root as any, (text, source) => parseBrowserCards(text, source, value => value));
+  const deck = await backend.load();
+  await backend.mutate({ action: 'remove', source: 'notes.md', index: 0, revision: deck.revisions['notes.md'] }, deck);
+  assert.equal(await (await archive.getFile()).text(), entry);
+  assert.equal(await (await note.getFile()).text(), '');
 });
 
 test('unchanged local edit does not open a writable stream', async () => {
@@ -101,7 +201,7 @@ test('local removal recognizes an absent source after an interrupted archive', a
   assert.equal(await (await source.getFile()).text(), '');
 });
 
-test('a reloaded local source write is not replayed while an earlier stream may still finish', async () => {
+test('a reloaded local source write is replanned from current contents', async () => {
   const root = directory('root');
   root.entries.set('notes.md', file('notes.md', entry));
   const backend = createLocalFolderBackend(root as any, (text, source) => parseBrowserCards(text, source, value => value));
@@ -109,8 +209,16 @@ test('a reloaded local source write is not replayed while an earlier stream may 
   const request = { action: 'edit' as const, source: 'notes.md', index: 0, revision: deck.revisions['notes.md'], question: 'Changed', answer: 'Answer' };
   const item: StoredMutation = { id: 'local-edit', createdAt: 1, destination: { provider: 'local', folder: root as any }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'source-writing', attempts: 0,
     sourceWrite: { id: 'notes.md', name: 'notes.md', revision: null, before: entry, after: entry.replace('One', 'Changed') } };
-  await assert.rejects(backend.persistent.execute(item, async () => {}, true), /may still be finishing/);
-  assert.equal(await (await root.entries.get('notes.md').getFile()).text(), entry);
+  let prepared = false;
+  await backend.persistent.execute(item, async value => {
+    if (value.stage === 'preparing') {
+      prepared = true;
+      assert.equal(value.sourceWrite, undefined);
+      assert.equal(value.archiveWrite, undefined);
+    }
+  }, true);
+  assert.equal(prepared, true);
+  assert.equal(await (await root.entries.get('notes.md').getFile()).text(), entry.replace('One', 'Changed'));
 });
 
 test('local removal preserves external changes when the archived card is already absent', async () => {
@@ -183,4 +291,12 @@ test('read-only folder name comes from the selected root path', async () => {
   const files = { item: () => ({ webkitRelativePath: 'My notes/subfolder/notes.md' }) } as unknown as FileList;
   assert.equal(selectedFolderName(files), 'My notes');
   assert.throws(() => selectedFolderName({ item: () => ({ webkitRelativePath: 'notes.md' }) } as unknown as FileList), /relative path/);
+});
+
+test('read-only folder counts non-Markdown entries without collecting the selection first', async () => {
+  const { createReadOnlyFolderBackend } = await import('../src/lib/local-folder-readonly.ts');
+  let seen = 0;
+  const files = { *[Symbol.iterator]() { for (let i = 0; i < 3000; i++) { seen++; yield { webkitRelativePath: `Cards/${i}.txt` } as File; } } };
+  await assert.rejects(createReadOnlyFolderBackend(files).load(), /more than 2000 entries/);
+  assert.equal(seen, 2001);
 });

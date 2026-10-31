@@ -3,12 +3,11 @@ import { archiveFilename, isNewSourceName, appendArchivedEntries } from './card-
 import { CardParseError } from './card-ranges.js';
 import { CardInputError } from './card-text.js';
 import { parseBrowserCards } from './browser-cards.js';
-import { DeckRequestError } from './deck-client.js';
+import { DeckRequestError, RetryableLocalConflict } from './deck-client.js';
 import { captureOperation, createOperationProjector, isUnchangedEdit, planContent, validateTargets } from './onedrive/operations.js';
 import type { DeckBackend } from './deck-backend.js';
 import type { DeckState, MutationRequest } from './types.js';
 import type { StoredMutation, MutationWritePlan } from './mutation-storage.js';
-import { reviewArchive, reviewSource } from './mutation-review.js';
 import { validateMutationPlan } from './mutation-plan.js';
 
 export type Directory = FileSystemDirectoryHandle & { values(): AsyncIterableIterator<FileSystemHandle> };
@@ -61,10 +60,25 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     } catch (error) { report(error); }
   }
 
-  async function write(handle: FileSystemFileHandle, text: string): Promise<void> {
-    const stream = await handle.createWritable();
-    await stream.write(text);
-    await stream.close();
+  async function write(handle: FileSystemFileHandle, before: string | null, text: string): Promise<void> {
+    // Browsers that implement mode coordinate exclusive writers. Older browsers may
+    // ignore the option; it does not lock external programs in either case.
+    const stream = await handle.createWritable({ mode: 'exclusive' } as FileSystemCreateWritableOptions);
+    let closing = false;
+    try {
+      const current = await (await handle.getFile()).text();
+      if (current !== (before ?? '')) throw new RetryableLocalConflict('The file changed before saving; the change will be retried.');
+      await stream.write(text);
+      closing = true;
+      await stream.close();
+    } catch (error) {
+      if (!closing) {
+        try { await stream.abort(); } catch (abortError) {
+          throw new AggregateError([error, abortError], 'The local write failed and its stream could not be aborted. Review the pending change.');
+        }
+      }
+      throw error;
+    }
   }
 
   async function mutate(request: MutationRequest, deck: DeckState): Promise<DeckState> {
@@ -90,6 +104,7 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     const change = planContent(before, operation);
     const source: MutationWritePlan = { id: operation.source, name: operation.source, before, after: change.text, revision: null };
     if (operation.action !== 'remove') return { source };
+    if (!change.removed) return { source, archive: { id: null, name: archiveFilename, before: null, after: '', revision: null } };
     let old: string | null = null;
     try { old = await (await (await root.getFileHandle(archiveFilename)).getFile()).text(); }
     catch (error) { if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error; }
@@ -109,62 +124,52 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
 
   async function localPublish(plan: MutationWritePlan): Promise<void> {
     const current = await localCurrent(plan);
-    if (current !== plan.before) throw new DeckRequestError('The file changed before saving. Review the pending change.');
+    if (current !== plan.before) throw new RetryableLocalConflict('The file changed before saving; the change will be retried.');
     const handle = plan.name === archiveFilename ? await root.getFileHandle(plan.name, { create: true }) : sources.get(plan.name);
     if (!handle) throw new DeckRequestError('The source file is no longer available. Review the pending change.');
-    await write(handle, plan.after);
+    await write(handle, plan.before, plan.after);
   }
 
-  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, recovered = false): Promise<DeckState> {
+  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, _recovered = false): Promise<DeckState> {
     if (saving) throw new Error('Concurrent local folder save.');
     saving = true;
     async function advance(patch: Partial<StoredMutation>) { Object.assign(item, patch); await checkpoint(item); }
     try {
       if (isUnchangedEdit(item.operation)) return item.snapshot;
-      if (!item.sourceWrite) {
-        await advance({ stage: 'preparing' });
-        const plan = await localPlan(item);
-        await advance({ sourceWrite: plan.source, archiveWrite: plan.archive, stage: plan.archive ? 'archive-ready' : 'source-ready' });
-      }
       validateMutationPlan(item);
-      const source = item.sourceWrite!;
-      if (item.stage === 'archive-writing') {
-        const archive = item.archiveWrite!;
-        const result = reviewArchive(item.operation, archive.before ?? '', archive.after, (await localCurrent(archive)) ?? '');
-        if (result === 'needs-review') throw new DeckRequestError('The archive changed while saving. Review the pending removal.');
-        if (result === 'safe-to-retry' && recovered) throw new DeckRequestError('The previous local archive write may still be finishing. Review the pending removal.');
-        await advance({ stage: result === 'satisfied' ? 'source-ready' : 'archive-ready' });
-      }
-      if (item.stage === 'archive-ready') {
-        await advance({ stage: 'archive-writing' });
-        await localPublish(item.archiveWrite!);
-        await advance({ stage: 'source-ready' });
-      }
-      if (item.stage === 'source-writing') {
-        const current = await localCurrent(source);
-        const archive = item.operation.action === 'remove' ? await localCurrent(item.archiveWrite!) : undefined;
-        const result = reviewSource(item.operation, source.before ?? '', current ?? '', archive ?? '');
-        if (result === 'needs-review') throw new DeckRequestError('The save outcome is unclear. Review the current file before continuing.');
-        if (result === 'safe-to-retry' && recovered) throw new DeckRequestError('The previous local write may still be finishing. Review the pending change.');
-        await advance({ stage: result === 'satisfied' ? 'releasing' : 'source-ready' });
-      }
-      if (item.stage === 'source-ready' && item.operation.action === 'remove') {
-        const current = await localCurrent(source);
-        const archive = await localCurrent(item.archiveWrite!);
-        if (current !== null && reviewSource(item.operation, source.before ?? '', current, archive ?? '') === 'satisfied') {
-          await advance({ stage: 'releasing' });
-        }
-      }
-      if (item.stage === 'source-ready') {
-        await advance({ stage: 'source-writing' });
-        await localPublish(source);
+      if (item.sourceWrite && item.stage === 'queued') throw new Error('Unexpected pending local mutation stage.');
+      if (item.sourceWrite && item.stage === 'source-writing' && await localCurrent(item.sourceWrite) === item.sourceWrite.after) {
         await advance({ stage: 'releasing' });
       }
+      if (item.stage !== 'releasing') {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await advance({ stage: 'preparing', sourceWrite: undefined, archiveWrite: undefined });
+          const plan = await localPlan(item);
+          await advance({ sourceWrite: plan.source, archiveWrite: plan.archive, stage: plan.archive ? 'archive-ready' : 'source-ready' });
+          validateMutationPlan(item);
+          try {
+            if (plan.source.before !== plan.source.after) {
+              if (plan.archive && (plan.archive.before ?? '') !== plan.archive.after) {
+                await advance({ stage: 'archive-writing' });
+                await localPublish(plan.archive);
+              }
+              await advance({ stage: 'source-writing' });
+              await localPublish(plan.source);
+            }
+            await advance({ stage: 'releasing' });
+            break;
+          } catch (error) {
+            if (!(error instanceof RetryableLocalConflict) || attempt === 2) throw error;
+          }
+        }
+      }
       if (item.stage !== 'releasing') throw new Error('Unexpected pending local mutation stage.');
+      const source = item.sourceWrite!;
       const handle = sources.get(source.name);
       if (!handle) throw new DeckRequestError('The saved file is no longer available. Refresh to review it.');
       const file = await handle.getFile();
-      return project(item.snapshot, item.operation, `${file.lastModified}:${file.size}`, await file.text());
+      const applied = item.operation.action === 'add' || planContent(source.before ?? '', item.operation).matched > 0;
+      return project(item.snapshot, item.operation, `${file.lastModified}:${file.size}`, await file.text(), applied);
     } catch (error) { report(error); }
     finally { saving = false; }
   }

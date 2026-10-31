@@ -13,6 +13,8 @@ export function createLoadBudget() {
       if (path.split('/').length > MAX_DEPTH) throw new DeckRequestError(`Folder depth exceeds ${MAX_DEPTH}: ${path}`);
       if (++count > MAX_FILES) throw new DeckRequestError(`Folder contains more than ${MAX_FILES} entries. Choose a smaller folder.`);
     },
+    remainingEntries() { return MAX_FILES - count; },
+    remainingBytes() { return Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total); },
     file(path: string, bytes: number) {
       if (bytes > MAX_FILE_BYTES) throw new DeckRequestError(`${path} exceeds the 5 MiB file limit.`);
       total += bytes;

@@ -10,21 +10,19 @@ export const readOnlyFolderMessage = 'This folder is read-only in your browser. 
 
 /** File inputs provide a snapshot, so a new selection is needed to refresh. */
 export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parseBrowserCards): DeckBackend {
-  const selected = [...files].filter(file => {
-    const parts = file.webkitRelativePath.split('/').slice(1);
-    return parts.length > 0 && parts.every(part => !part.startsWith('.')) &&
-      parts.at(-1)!.toLowerCase() !== archiveFilename && /\.md$/i.test(parts.at(-1)!);
-  });
   return {
     async load(signal?: AbortSignal): Promise<DeckState> {
       const budget = createLoadBudget();
       const cards: DeckState['cards'] = [];
       const errors: string[] = [];
       const revisions: Record<string, string> = {};
-      for (const file of selected) {
+      for (const file of files) {
         signal?.throwIfAborted();
-        const source = file.webkitRelativePath.split('/').slice(1).join('/');
+        const parts = file.webkitRelativePath.split('/').slice(1);
+        if (!parts.length || parts.some(part => part.startsWith('.')) || parts.at(-1)!.toLowerCase() === archiveFilename) continue;
+        const source = parts.join('/');
         budget.entry(source);
+        if (!/\.md$/i.test(parts.at(-1)!)) continue;
         budget.file(source, file.size);
         try { cards.push(...parse(await file.text(), source)); }
         catch (error) {

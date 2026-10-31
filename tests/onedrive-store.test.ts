@@ -19,6 +19,7 @@ function fixture() {
   const nodes = new Map<string, Node>();
   const folder: GraphItem = { id: 'root', name: 'Cards', folder: {} };
   const committed: Write[] = [];
+  const reads: string[] = [];
   const hooks: { before?: (write: Write) => Promise<void> | void; after?: (write: Write) => Promise<void> | void } = {};
   const copy = (item: GraphItem) => structuredClone(item);
   function requireNode(id: string) {
@@ -46,7 +47,7 @@ function fixture() {
       if (child(parent, name)) throw new GraphError('Name collision', { status: 409, code: 'nameAlreadyExists' });
       return put(parent, name, '', true);
     },
-    readText: async id => { const node = requireNode(id); return { id, text: node.text, revision: node.item.eTag! }; },
+    readText: async id => { reads.push(id); const node = requireNode(id); return { id, text: node.text, revision: node.item.eTag! }; },
     createFile: async (parent, name, text) => {
       const write: Write = { kind: 'create', id: '', parent, name, text };
       await hooks.before?.(write);
@@ -69,8 +70,15 @@ function fixture() {
       return saved;
     },
   };
-  const store = () => createOneDriveStore(graph, folder, parse);
-  return { graph, folder, hooks, committed, store, put,
+  const store = () => {
+    const values = new Map();
+    return createOneDriveStore(graph, folder, parse, {
+      get: async name => values.get(name),
+      put: async (name, value) => { values.set(name, value); },
+      clear: async () => { values.clear(); },
+    });
+  };
+  return { graph, folder, hooks, committed, reads, store, put,
     move: (id: string, parent: string) => { requireNode(id).parent = parent; requireNode(id).item.parentReference = { id: parent }; },
     text: (parent: string, name: string) => child(parent, name)?.text,
   };
@@ -120,7 +128,6 @@ test('add creation collision rebases onto the newly existing file without import
   assert.equal(f.text('root', 'new_cards.md'), entry('External') + entry('Mine'));
   assert.deepEqual(updated.cards.map(card => card.question), ['Mine']);
   assert.deepEqual(deck.cards, []);
-  assert.equal(await store.pending(), null);
 });
 
 test('add CAS conflict rereads latest source and preserves a concurrent external update', async () => {
@@ -141,7 +148,7 @@ test('add CAS conflict rereads latest source and preserves a concurrent external
   assert.equal(updated.cards[0], deck.cards[0]);
 });
 
-test('edit conflict does not change matching cards added by another editor', async () => {
+test('edit conflict updates all matching cards added by another editor', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Original'));
   const store = f.store();
@@ -153,8 +160,8 @@ test('edit conflict does not change matching cards added by another editor', asy
       f.put('root', 'deck.md', entry('Original') + entry('Original'));
     }
   };
-  await assert.rejects(store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'Changed', answer: 'Answer' }, deck), /matching cards changed/);
-  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Original'));
+  await store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'Changed', answer: 'Answer' }, deck);
+  assert.equal(f.text('root', 'deck.md'), entry('Changed') + entry('Changed'));
 });
 
 test('edit updates all source duplicates while preserving other files and snapshot-only membership', async () => {
@@ -175,7 +182,7 @@ test('edit updates all source duplicates while preserving other files and snapsh
   assert.equal(deck.cards[0].question, 'Same');
 });
 
-test('unchanged edit performs no OneDrive writes or journal claim', async () => {
+test('unchanged edit performs no OneDrive writes', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Same') + entry('Same'));
   const store = f.store();
@@ -201,12 +208,12 @@ test('persistent add with lost response is reviewed instead of replayed', async 
   f.hooks.after = undefined;
   store = f.store();
   await store.load();
-  await assert.rejects(store.execute(saved, checkpoint), /outcome is unclear/);
+  await assert.rejects(store.execute(saved, checkpoint), /may still be in flight/);
   assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
   assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
 });
 
-test('persistent edit can confirm an interrupted write after reload without rewriting', async () => {
+test('persistent edit with an interrupted write remains blocked after reload', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Old') + entry('New') + entry('Old'));
   let store = f.store();
@@ -220,13 +227,12 @@ test('persistent edit can confirm an interrupted write after reload without rewr
   f.hooks.after = undefined;
   store = f.store();
   await store.load();
-  await store.execute(saved, checkpoint);
+  await assert.rejects(store.execute(saved, checkpoint), /may still be in flight/);
   assert.equal(f.text('root', 'deck.md'), entry('New') + entry('New') + entry('New'));
   assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
-  assert.equal(await store.pending(), null);
 });
 
-test('persistent removal resumes source after interrupted archive without another archive write', async () => {
+test('persistent removal with an interrupted archive stays blocked without another write', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Old'));
   let store = f.store();
@@ -240,13 +246,13 @@ test('persistent removal resumes source after interrupted archive without anothe
   f.hooks.after = undefined;
   store = f.store();
   await store.load();
-  await store.execute(saved, checkpoint);
-  assert.equal(f.text('root', 'deck.md'), '');
+  await assert.rejects(store.execute(saved, checkpoint), /may still be in flight/);
+  assert.equal(f.text('root', 'deck.md'), entry('Old'));
   assert.equal(f.text('root', 'removed.md'), entry('Old'));
   assert.equal(f.committed.filter(write => write.name === 'removed.md').length, 1);
 });
 
-test('removal recognizes an already absent source after an interrupted archive', async () => {
+test('removal stays blocked even if the source is absent after an interrupted archive', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Old'));
   let store = f.store();
@@ -261,12 +267,11 @@ test('removal recognizes an already absent source after an interrupted archive',
   f.put('root', 'deck.md', '');
   store = f.store();
   await store.load();
-  await store.execute(saved, checkpoint);
+  await assert.rejects(store.execute(saved, checkpoint), /may still be in flight/);
   assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 0);
-  assert.equal(await store.pending(), null);
 });
 
-test('persistent add retries the same conditional write when the lost response preceded commit', async () => {
+test('persistent add does not retry when the lost response preceded commit', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Old'));
   const store = f.store();
@@ -276,9 +281,9 @@ test('persistent add retries the same conditional write when the lost response p
   let failed = false;
   f.hooks.before = write => { if (write.name === 'deck.md' && !failed) { failed = true; throw new GraphError('network', { status: 0, code: 'networkError' }, true); } };
   await assert.rejects(store.execute(item, async () => {}), /network/);
-  await store.execute(item, async () => {});
-  assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
-  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
+  await assert.rejects(store.execute(item, async () => {}), /may still be in flight/);
+  assert.equal(f.text('root', 'deck.md'), entry('Old'));
+  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 0);
 });
 
 test('persistent add replans a definite conflict and preserves the external addition', async () => {
@@ -292,10 +297,9 @@ test('persistent add replans a definite conflict and preserves the external addi
   f.hooks.before = write => { if (write.name === 'deck.md' && !raced) { raced = true; f.put('root', 'deck.md', entry('Old') + entry('External')); } };
   await store.execute(item, async () => {});
   assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('External') + entry('New'));
-  assert.equal(await store.pending(), null);
 });
 
-test('persistent removal confirms lost source response with an existing identical archive entry', async () => {
+test('persistent removal does not replay a lost source response with an identical archive entry', async () => {
   const f = fixture();
   f.put('root', 'deck.md', entry('Old'));
   f.put('root', 'removed.md', entry('Old'));
@@ -310,45 +314,11 @@ test('persistent removal confirms lost source response with an existing identica
   f.hooks.after = undefined;
   store = f.store();
   await store.load();
-  await store.execute(saved, checkpoint);
+  await assert.rejects(store.execute(saved, checkpoint), /may still be in flight/);
   assert.equal(f.text('root', 'deck.md'), '');
-  assert.equal(f.text('root', 'removed.md'), entry('Old') + entry('Old'));
+  assert.equal(f.text('root', 'removed.md'), entry('Old'));
   assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
-  assert.equal(f.committed.filter(write => write.name === 'removed.md').length, 1);
-});
-
-test('a crash after recording a successful write releases the journal without replay', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Old'));
-  let store = f.store();
-  const deck = await store.load();
-  const request = { action: 'add' as const, source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' };
-  const item: StoredMutation = { id: 'release-crash', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
-  let saved = structuredClone(item);
-  await assert.rejects(store.execute(item, async value => { saved = structuredClone(value); if (value.stage === 'releasing') throw new Error('simulated crash'); }), /simulated crash/);
-  store = f.store();
-  await store.load();
-  await store.execute(saved, async () => {});
-  assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
-  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
-  assert.equal(await store.pending(), null);
-});
-
-test('persistent recovery rejects a journal with the same ID but different write plans', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Old'));
-  const store = f.store();
-  const deck = await store.load();
-  const request = { action: 'add' as const, source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' };
-  const item: StoredMutation = { id: 'mismatched-plan', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
-  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('network', { status: 0, code: 'networkError' }, true); };
-  await assert.rejects(store.execute(item, async () => {}), /network/);
-  f.hooks.before = undefined;
-  const journal = JSON.parse(f.text('root', JOURNAL)!);
-  journal.operation.sourceWrite.after = entry('Unexpected');
-  f.put('root', JOURNAL, JSON.stringify(journal));
-  await assert.rejects(store.execute(item, async () => {}), /do not match/);
-  assert.equal(f.text('root', 'deck.md'), entry('Old'));
+  assert.equal(f.committed.filter(write => write.name === 'removed.md').length, 0);
 });
 
 test('remove archives exact CRLF duplicate bytes before deleting any source occurrence', async () => {
@@ -359,99 +329,16 @@ test('remove archives exact CRLF duplicate bytes before deleting any source occu
   const store = f.store();
   const deck = await store.load();
   f.hooks.before = write => {
-    if (write.name === 'deck.md') assert.equal(f.text('root', 'removed.md'), duplicate + duplicate);
+    if (write.name === 'deck.md') assert.equal(f.text('root', 'removed.md'), duplicate);
   };
   const updated = await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck);
   assert.equal(f.text('root', 'deck.md'), remaining);
-  assert.equal(f.text('root', 'removed.md'), duplicate + duplicate);
+  assert.equal(f.text('root', 'removed.md'), duplicate);
   assert.deepEqual(updated.cards.map(card => card.question), ['Other']);
   assert.deepEqual(updated.files, ['deck.md']);
-  assert.equal(await store.pending(), null);
 });
 
-test('definite source failure after archival retains recovery intent and safely retries the original CAS', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Remove') + entry('Keep'));
-  const store = f.store();
-  const deck = await store.load();
-  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Permission temporarily denied', { status: 403, code: 'accessDenied' }); };
-  await assert.rejects(store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck), DeckRequestError);
-  assert.equal(f.text('root', 'removed.md'), entry('Remove'));
-  assert.equal(f.text('root', 'deck.md'), entry('Remove') + entry('Keep'));
-  const pending = await store.pending();
-  assert.equal(pending?.stage, 'source-writing');
-  assert.equal(pending?.sourceWrite.revision, deck.revisions['deck.md']);
-  f.hooks.before = undefined;
-  await store.recover();
-  assert.equal(f.text('root', 'deck.md'), entry('Keep'));
-  assert.equal(f.text('root', 'removed.md'), entry('Remove'));
-  assert.equal(await store.pending(), null);
-});
-
-test('unknown source write that actually committed cannot append again during recovery', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Original'));
-  const store = f.store();
-  const deck = await store.load();
-  f.hooks.after = write => { if (write.name === 'deck.md') throw new GraphError('Save outcome unknown', { status: 0, code: 'networkError' }, true); };
-  await assert.rejects(store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'Mine', answer: 'Answer' }, deck), /unknown/);
-  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Mine'));
-  f.hooks.after = undefined;
-  await assert.rejects(store.recover(), /cannot be repeated safely/);
-  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Mine'));
-  const pending = await store.pending();
-  assert.ok(pending);
-  await store.clearReviewed(pending.id);
-  assert.equal(await store.pending(), null);
-  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
-});
-
-test('interrupted add with no source write recovers the exact prepared bytes and revision', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Original'));
-  const store = f.store();
-  const deck = await store.load();
-  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('Request aborted before sending', { status: 0, code: 'networkError' }, true); };
-  await assert.rejects(store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'Mine', answer: 'Answer' }, deck));
-  const pending = await store.pending();
-  assert.equal(pending?.sourceWrite.revision, deck.revisions['deck.md']);
-  assert.equal(f.text('root', 'deck.md'), entry('Original'));
-  f.hooks.before = undefined;
-  await store.recover();
-  const write = f.committed.find(write => write.name === 'deck.md')!;
-  assert.equal(write.revision, pending!.sourceWrite.revision);
-  assert.equal(write.text, pending!.sourceWrite.after);
-  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Mine'));
-  assert.equal(await store.pending(), null);
-});
-
-test('competing stores serialize through no-clobber journal claims', async () => {
-  const f = fixture();
-  f.put('root', 'deck.md', entry('Original'));
-  const first = f.store();
-  const second = f.store();
-  const firstDeck = await first.load();
-  const secondDeck = await second.load();
-  let unblock!: () => void;
-  let entered!: () => void;
-  const gate = new Promise<void>(resolve => { unblock = resolve; });
-  const started = new Promise<void>(resolve => { entered = resolve; });
-  let paused = false;
-  f.hooks.before = async write => {
-    if (write.name === JOURNAL && write.kind === 'create' && !paused) { paused = true; entered(); await gate; }
-  };
-  const losing = first.mutate({ action: 'add', source: 'deck.md', revision: firstDeck.revisions['deck.md'], question: 'First', answer: 'Answer' }, firstDeck);
-  // Attach a rejection observer before allowing the competing write to finish.
-  const outcome = losing.then(() => null, error => error);
-  await started;
-  await second.mutate({ action: 'add', source: 'deck.md', revision: secondDeck.revisions['deck.md'], question: 'Second', answer: 'Answer' }, secondDeck);
-  unblock();
-  assert.ok(await outcome instanceof DeckRequestError);
-  assert.equal(f.text('root', 'deck.md'), entry('Original') + entry('Second'));
-  assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 1);
-});
-
-test('nested source cards remain editable through the durable operation journal', async () => {
+test('nested source cards remain editable', async () => {
   const f = fixture();
   const nested = f.put('root', 'nested', '', true);
   f.put(nested.id, 'deck.md', entry('Original'));
@@ -460,7 +347,6 @@ test('nested source cards remain editable through the durable operation journal'
   const updated = await store.mutate({ action: 'edit', source: 'nested/deck.md', revision: deck.revisions['nested/deck.md'], index: 0, question: 'Changed', answer: 'New' }, deck);
   assert.equal(f.text(nested.id, 'deck.md'), entry('Changed', 'New'));
   assert.equal(updated.cards[0].question, 'Changed');
-  assert.equal(await store.pending(), null);
 });
 
 
@@ -472,4 +358,126 @@ test('refuses to edit a source moved out of the selected folder', async () => {
   f.move(item.id, 'elsewhere');
   await assert.rejects(store.mutate({ action: 'edit', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'Changed', answer: 'Answer' }, deck), /moved, renamed, or replaced/);
   assert.equal(f.text('elsewhere', 'deck.md'), entry('Original'));
+});
+
+
+test('hidden files do not block saves or get modified', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  const old = JSON.stringify({ version: 1, operation: { id: 'old' } });
+  f.put('root', JOURNAL, old);
+  const store = f.store();
+  const deck = await store.load();
+  await store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' }, deck);
+  assert.equal(f.text('root', JOURNAL), old);
+  assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
+});
+
+test('missing edit or remove target leaves current source and archive untouched', async () => {
+  for (const action of ['edit', 'remove'] as const) {
+    const f = fixture();
+    f.put('root', 'deck.md', entry('Old'));
+    const store = f.store();
+    const deck = await store.load();
+    f.put('root', 'deck.md', entry('External'));
+    const request = action === 'edit'
+      ? { action, source: 'deck.md', revision: deck.revisions['deck.md'], index: 0, question: 'New', answer: 'Answer' }
+      : { action, source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 };
+    await store.mutate(request, deck);
+    assert.equal(f.text('root', 'deck.md'), entry('External'));
+    assert.equal(f.text('root', 'removed.md'), action === 'remove' ? entry('Old') : undefined);
+    assert.equal(f.committed.filter(write => write.name === 'deck.md').length, 0);
+  }
+});
+
+test('remove rebases after a source conflict and archives only once', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  const store = f.store();
+  const deck = await store.load();
+  let raced = false;
+  f.hooks.before = write => {
+    if (write.name === 'deck.md' && !raced) {
+      raced = true;
+      f.put('root', 'deck.md', entry('Old') + entry('Old') + entry('Other'));
+    }
+  };
+  await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck);
+  assert.equal(f.text('root', 'deck.md'), entry('Other'));
+  assert.equal(f.text('root', 'removed.md'), entry('Old'));
+});
+
+
+test('first source and archive writes use initialized snapshots without downloading again', async () => {
+  const f = fixture();
+  const source = f.put('root', 'deck.md', entry('Old'));
+  const archive = f.put('root', 'removed.md', entry('Previous'));
+  const store = f.store();
+  const deck = await store.load();
+  f.reads.length = 0;
+  let firstWrite = true;
+  f.hooks.before = () => {
+    if (firstWrite) {
+      assert.equal(f.reads.includes(source.id), false);
+      assert.equal(f.reads.includes(archive.id), false);
+      firstWrite = false;
+    }
+  };
+  await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck);
+  assert.equal(firstWrite, false);
+});
+
+test('refreshes a cached archive no-op before removing the source', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  f.put('root', 'removed.md', entry('Old'));
+  const store = f.store();
+  const deck = await store.load();
+  f.put('root', 'removed.md', entry('Other'));
+  await store.mutate({ action: 'remove', source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 }, deck);
+  assert.equal(f.text('root', 'removed.md'), entry('Other') + entry('Old'));
+  assert.equal(f.text('root', 'deck.md'), '');
+});
+
+test('successful first write does not download the source again', async () => {
+  const f = fixture();
+  const source = f.put('root', 'deck.md', entry('Old'));
+  const store = f.store();
+  const deck = await store.load();
+  f.reads.length = 0;
+  await store.mutate({ action: 'add', source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' }, deck);
+  assert.equal(f.reads.includes(source.id), false);
+});
+
+test('repeated source conflicts retain a replanned retryable operation', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  const store = f.store();
+  const deck = await store.load();
+  const request = { action: 'add' as const, source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' };
+  const item: StoredMutation = { id: 'retry-conflict', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  f.hooks.before = write => { if (write.name === 'deck.md') throw new GraphError('stale', { status: 412, code: 'preconditionFailed' }); };
+  await assert.rejects(store.execute(item, async () => {}), error => error instanceof DeckRequestError && error.cause instanceof GraphError && error.cause.code === 'retryableConflict');
+  assert.equal(item.stage, 'source-ready');
+  f.hooks.before = undefined;
+  await store.execute(item, async () => {});
+  assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
+});
+
+test('repeated archive conflicts retain a retryable removal', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  f.put('root', 'removed.md', entry('Other'));
+  const store = f.store();
+  const deck = await store.load();
+  const request = { action: 'remove' as const, source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 };
+  const item: StoredMutation = { id: 'retry-archive', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  f.hooks.before = write => { if (write.name === 'removed.md') throw new GraphError('stale', { status: 412, code: 'preconditionFailed' }); };
+  await assert.rejects(store.execute(item, async () => {}), error => error instanceof DeckRequestError && error.cause instanceof GraphError && error.cause.code === 'retryableConflict');
+  assert.equal(item.stage, 'archive-ready');
+  assert.equal(f.text('root', 'deck.md'), entry('Old'));
+  f.hooks.before = undefined;
+  await store.execute(item, async () => {});
+  assert.equal(f.text('root', 'deck.md'), '');
+  assert.equal(f.text('root', 'removed.md'), entry('Other') + entry('Old'));
 });

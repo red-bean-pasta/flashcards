@@ -18,6 +18,8 @@ interface QueueCallbacks {
   deck(): DeckState;
 }
 
+export const MUTATION_LOCK = 'flashcards-mutation-queue';
+
 /** One persisted FIFO per destination. The browser lock prevents two tabs replaying it. */
 export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage = mutationStorage) {
   let backend: DeckBackend | undefined;
@@ -161,7 +163,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
     running = true;
     try {
       if (!navigator.locks || !channel) throw new DeckRequestError('This browser cannot safely coordinate pending changes between tabs.');
-      await navigator.locks.request('flashcards-mutation-queue', { ifAvailable: true }, async lock => {
+      await navigator.locks.request(MUTATION_LOCK, { ifAvailable: true }, async lock => {
         if (lock) await work();
         else schedule(2000);
       });
@@ -187,7 +189,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
   async function discard(id: string): Promise<void> {
     if (!backend?.persistent || activeId) throw new DeckRequestError('Connect the original folder and wait for the active save before dismissing this change.');
     const selected = backend;
-    await navigator.locks.request('flashcards-mutation-queue', async () => {
+    await navigator.locks.request(MUTATION_LOCK, async () => {
       await refresh();
       const item = items.find(value => value.id === id);
       if (!item || !item.review || !selected.persistent || !await sameDestination(item.destination, selected.persistent.destination)) throw new DeckRequestError('Connect the original folder to dismiss this pending change.');
@@ -203,7 +205,7 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
   async function reviewAgain(id: string): Promise<void> {
     if (!backend?.persistent || activeId) throw new DeckRequestError('Connect the original folder and wait for the active save.');
     const selected = backend;
-    await navigator.locks.request('flashcards-mutation-queue', async () => {
+    await navigator.locks.request(MUTATION_LOCK, async () => {
       await refresh();
       const item = items.find(value => value.id === id);
       if (!item || !item.review || item.retryBlocked || !selected.persistent || !await sameDestination(item.destination, selected.persistent.destination)) throw new DeckRequestError('This change cannot be reviewed again until its original folder is connected.');

@@ -323,7 +323,6 @@
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
   <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
-    managedOperations={pendingItems.map(item => item.id)}
     onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
     onActivity={value => { storageActivity = value; }} onPickerChange={value => { pickerOpen = value; }}
     {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width', String(value)); }}

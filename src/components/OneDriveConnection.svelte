@@ -9,10 +9,10 @@
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
 
-  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true, managedOperations = [] }: {
+  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
     onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
     pickerWidth: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
-    active?: 'local' | 'onedrive'; canSwitch?: boolean; managedOperations?: string[];
+    active?: 'local' | 'onedrive'; canSwitch?: boolean;
   } = $props();
   const clientId = import.meta.env.VITE_ONEDRIVE_CLIENT_ID as string | undefined;
   let auth = $state<OneDriveAuth | undefined>();
@@ -21,12 +21,9 @@
   // Controller snapshots are replaced as a whole; keep backend identity intact.
   let selected = $state.raw<ConnectedFolder | null>(null);
   const folder = $derived(selected?.folder);
-  const recovery = $derived(selected?.recovery);
-  const recoveryError = $derived(selected?.recoveryError ?? '');
   let busy = $state(false);
   let actionError = $state('');
   let redirecting = false;
-  let recoveryOpen = $state(false);
   let pickerOpen = $state(false);
   type PickerSlot = { id: number; frame?: HTMLIFrameElement };
   let pickerSlots = $state<PickerSlot[]>([]);
@@ -148,7 +145,6 @@
     const changed = selected?.backend !== next.backend;
     selected = next;
     if (changed) {
-      recoveryOpen = false;
       onBackend(next.backend, next.folder.name);
     }
   }
@@ -242,12 +238,6 @@
 
   export function clearActionError() { actionError = ''; }
 
-  async function clearReviewed() {
-    if (!window.confirm('Keep the files currently in OneDrive and clear this pending save? Check the source and removed.md first. This does not undo or repeat any file change.')) return;
-    await requireConnection().clearReviewed();
-    recoveryOpen = false;
-  }
-
   onMount(() => {
     if (!clientId) { onActivity(null); return; }
     const restoring = lastProvider() === 'onedrive' || new URLSearchParams(location.search).has('code') || new URLSearchParams(location.search).has('error');
@@ -265,38 +255,21 @@
         }
       }
     }, restoring ? 'connecting' : 'working');
-    return () => { destroyed = true; cancelPickerRefresh(); clearReadyTimer(); for (const instance of pickers.values()) instance.dispose(); };
+    return () => { destroyed = true; cancelPickerRefresh(); clearReadyTimer(); for (const instance of pickers.values()) instance.dispose(); void connection?.dispose().catch(error => console.error('Could not clear the OneDrive snapshot cache.', error)); };
   });
 </script>
 
-<aside class="storage-connection onedrive-status" aria-label="OneDrive status" class:has-status={!!actionError || (active === 'onedrive' && (!!recoveryError || !!recovery))}>
-  {#if actionError || (active === 'onedrive' && recoveryError)}
+<aside class="storage-connection onedrive-status" aria-label="OneDrive status" class:has-status={!!actionError}>
+  {#if actionError}
     {#if actionError}<p role="alert" class="save-error">{actionError}</p>{/if}
-    {#if active === 'onedrive' && recoveryError}<p role="alert" class="save-error">{recoveryError}</p>{/if}
     {#if auth}<button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>{/if}
     {#if graph}<button class="text-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>{/if}
-  {/if}
-  {#if recovery && active === 'onedrive' && !managedOperations.includes(recovery.id)}
-    <section class="pending-save" aria-label="Pending OneDrive save">
-      <p role="status">A pending {recovery.action} in {recovery.source} needs review. Further saves are paused.</p>
-      <button class="text-action" disabled={busy || !canSwitch} onclick={() => { recoveryOpen = !recoveryOpen; }}>Review pending save</button>
-      {#if recoveryOpen}
-        <p>Retry sends the same prepared write against its original revision. If the file changed, it stops. A timeout may have happened after the save succeeded.</p>
-        <details><summary>Source before save</summary><pre>{recovery.sourceWrite.before ?? '(new file)'}</pre></details>
-        <details><summary>Prepared source after save</summary><pre>{recovery.sourceWrite.after}</pre></details>
-        {#if recovery.archiveWrite}<details><summary>Prepared removed.md</summary><pre>{recovery.archiveWrite.after}</pre></details>{/if}
-        <button class="text-action" disabled={busy || !canSwitch} onclick={() => run(() => requireConnection().retryPending())}>Retry prepared save</button>
-        <button class="text-action" disabled={busy || !canSwitch} onclick={() => run(clearReviewed)}>Keep current files and clear pending save</button>
-      {/if}
-    </section>
   {/if}
 </aside>
 
 <style>
   .onedrive-status:not(.has-status) { display: none; }
   .onedrive-status.has-status { top: 3rem; right: auto; }
-  .pending-save { background: var(--dialog-color, #f9f7f0); border: 1px solid #aaa5; border-radius: .5rem; padding: .8rem; max-width: 42rem; margin-top: .5rem; }
-  pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
 
   .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
   .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }

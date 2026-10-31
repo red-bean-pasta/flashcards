@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { CardParseError, parseCardRanges } from '../src/lib/card-ranges.ts';
-import { CardInputError } from '../src/lib/card-text.ts';
+import { appendArchivedEntries, CardInputError } from '../src/lib/card-text.ts';
 import { DeckRequestError } from '../src/lib/deck-client.ts';
 import { captureOperation, planContent, createOperationProjector } from '../src/lib/onedrive/operations.ts';
 import type { CardOperation } from '../src/lib/onedrive/operations.ts';
@@ -44,6 +44,13 @@ test('edit and remove replace every exact pair occurrence in the selected source
   });
 });
 
+test('archive appends only pairs not already archived, including duplicate removed entries', () => {
+  const existing = entry('Same');
+  assert.equal(appendArchivedEntries(existing, entry('Same') + entry('New') + entry('New')), existing + entry('New'));
+  assert.equal(appendArchivedEntries(existing, entry('Same')), existing);
+  assert.equal(appendArchivedEntries('', ''), '');
+});
+
 test('CRLF edit preserves untouched raw spans and removal archives exact original bytes', () => {
   const first = entry('Same').replaceAll('\n', '\r\n');
   const between = entry('Unchanged  spacing', 'Line one\n\nLine two').replaceAll('\n', '\r\n');
@@ -60,13 +67,12 @@ test('CRLF edit preserves untouched raw spans and removal archives exact origina
   assert.equal(removed.matched, 2);
 });
 
-test('pair matching preserves internal whitespace distinctions and changed originals require refresh', () => {
+test('pair matching preserves internal whitespace distinctions and absent originals are no-ops', () => {
   const text = entry('Two  spaces') + entry('Two spaces') + entry('Two\n\nspaces');
   const change = planContent(text, { action: 'remove', source: 'deck.md', original: { question: 'Two  spaces', answer: 'Answer' } });
   assert.equal(change.text, entry('Two spaces') + entry('Two\n\nspaces'));
   assert.equal(change.matched, 1);
-  assert.throws(() => planContent(text, { action: 'remove', source: 'deck.md', original: pair }),
-    error => error instanceof DeckRequestError && /changed or removed/.test(error.message));
+  assert.deepEqual(planContent(text, { action: 'remove', source: 'deck.md', original: pair }), { text, removed: '', matched: 0 });
   assert.throws(() => planContent(text, { action: 'remove', source: 'deck.md' }),
     error => error instanceof Error && !(error instanceof DeckRequestError) && /require an original/.test(error.message));
 });
@@ -111,6 +117,14 @@ test('snapshot removal removes all source matches while preserving other sources
   assert.deepEqual(projected.files, deck.files);
   assert.equal(projected.revisions['deck.md'], 'saved');
   assert.equal(deck.cards.length, 4);
+});
+
+test('a no-op edit preserves the practice snapshot even when the replacement exists in the current file', () => {
+  const deck = snapshot();
+  const operation = captureOperation(deck, { action: 'edit', source: 'deck.md', revision: 'old', index: 0, question: 'Changed', answer: 'New' });
+  const projected = projectOperation(deck, operation, 'new', entry('Changed', 'New'), false);
+  assert.deepEqual(projected.cards.filter(card => card.source === 'deck.md'), deck.cards.filter(card => card.source === 'deck.md'));
+  assert.equal(projected.revisions['deck.md'], 'new');
 });
 
 test('add appends exactly one matching card and retains existing snapshot occurrences', () => {

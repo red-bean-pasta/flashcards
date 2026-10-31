@@ -21,7 +21,7 @@ export function normalizedPair(pair: Pair): Pair {
   return { question: normalize(pair.question), answer: normalize(pair.answer) };
 }
 
-/** An unchanged edit has no storage effect and needs no recovery journal. */
+/** An unchanged edit has no storage effect. */
 export function isUnchangedEdit(operation: CardOperation): boolean {
   return operation.action === 'edit' && operation.original !== undefined && samePair(operation.original, normalizedPair(operation.replacement));
 }
@@ -51,20 +51,16 @@ export function planContent(text: string, operation: CardOperation): ContentChan
   };
   if (!operation.original) throw new Error('Edit/remove operations require an original pair.');
   const matches = ranges.filter(range => samePair(range.content, operation.original!));
-  if (!matches.length) throw new DeckRequestError('This card was changed or removed. Your draft has been kept; refresh to review the current file.');
   const replacement = operation.action === 'edit' ? formatEntry(operation.replacement.question, operation.replacement.answer, eol) : '';
   let next = text;
   for (const range of [...matches].reverse()) next = next.slice(0, range.start) + replacement + next.slice(range.end);
   return { text: next, removed: operation.action === 'remove' ? matches.map(range => text.slice(range.start, range.end)).join('') : '', matched: matches.length };
 }
 
-/** A queued edit or removal must still address the same number of matching cards. */
-export function validateTargets(text: string, operation: CardOperation, snapshot: DeckState): void {
+/** Check the operation contract; matching is determined against the latest file. */
+export function validateTargets(_text: string, operation: CardOperation, _snapshot: DeckState): void {
   if (operation.action === 'add') return;
   if (!operation.original) throw new Error('Mutation requires an original pair.');
-  const expected = snapshot.cards.filter(card => card.source === operation.source && samePair(card, operation.original!)).length;
-  const actual = parseCardRanges(text, operation.source).filter(range => samePair(range.content, operation.original!)).length;
-  if (!expected || actual !== expected) throw new DeckRequestError('The matching cards changed before saving. Review the pending change.');
 }
 
 function parseReplacement(operation: Extract<CardOperation, { replacement: Pair }>, parse: typeof parseBrowserCards): Card {
@@ -91,9 +87,9 @@ function projectSourceCards(previous: Card[], operation: CardOperation, parse: t
 /** Configure rendering once for projections of this store's practice snapshot. */
 export function createOperationProjector(parse: typeof parseBrowserCards = parseBrowserCards) {
   /** Apply only this operation; external edits wait for refresh. */
-  return function projectOperation(deck: DeckState, operation: CardOperation, revision: string, savedText?: string): DeckState {
+  return function projectOperation(deck: DeckState, operation: CardOperation, revision: string, savedText?: string, applied = true): DeckState {
     const previous = deck.cards.filter(card => card.source === operation.source);
-    let cards = projectSourceCards(previous, operation, parse);
+    let cards = applied ? projectSourceCards(previous, operation, parse) : previous;
     if (savedText !== undefined) cards = locateSnapshotCards(cards, savedText, operation.source);
     return {
       ...deck, cards: [...deck.cards.filter(card => card.source !== operation.source), ...cards],

@@ -147,3 +147,25 @@ test('malformed JSON keeps a syntax cause; unrelated body errors and consumed bo
   await consumed.json();
   await assert.rejects(fake([consumed]).client.replaceText('f', 'old', 'new'), error => error instanceof TypeError && !(error instanceof GraphError));
 });
+
+test('pagination stops at the entry limit without requesting further pages', async () => {
+  const next = `${BASE}/me/drive/items/p/children?$skiptoken=next`;
+  const { client, calls } = fake([
+    Response.json({ value: [{ id: 'a', name: 'a', folder: {} }], '@odata.nextLink': next }),
+    Response.json({ value: [file()], '@odata.nextLink': `${next}2` }),
+  ]);
+  await assert.rejects(client.children('p', undefined, 1), error => error instanceof GraphError && error.code === 'entryLimit');
+  assert.equal(calls.length, 2);
+});
+
+test('download limit counts actual streamed bytes and cancels before reading the whole file', async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode('你好')); },
+    cancel() { cancelled = true; },
+  });
+  const { client, calls } = fake([Response.json(file()), new Response(body, { headers: { 'Content-Length': '1' } })]);
+  await assert.rejects(client.readText('f', undefined, 5), error => error instanceof GraphError && error.code === 'downloadLimit');
+  assert.equal(cancelled, true);
+  assert.equal(calls.length, 2);
+});

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { retryDecision } from '../src/lib/mutation-retry.ts';
-import { DeckRequestError } from '../src/lib/deck-client.ts';
+import { DeckRequestError, RetryableLocalConflict } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
 
 test('temporary failures back off and retain Retry-After through wrapped causes', () => {
@@ -25,6 +25,13 @@ test('temporary local filesystem network failures are eligible for review and re
   const failure = new DeckRequestError('Network unavailable', { cause: new DOMException('Network unavailable', 'NetworkError') });
   assert.deepEqual(retryDecision(failure, 0, 1000, 0), { kind: 'retry', notBefore: 3000 });
   assert.deepEqual(retryDecision(new DOMException('Access denied', 'NotAllowedError'), 0, 1000, 0), { kind: 'review' });
+});
+
+test('detected conflicts continue through delayed retry, while uncertain conflicts need review', () => {
+  for (const error of [new RetryableLocalConflict('changed'), new GraphError('changed', { status: 412, code: 'stale' })]) {
+    assert.deepEqual(retryDecision(error, 3, 1000, 0), { kind: 'retry', notBefore: 121000 });
+  }
+  assert.deepEqual(retryDecision(new GraphError('unknown', { status: 412, code: 'stale' }, true), 0, 1000, 0), { kind: 'review' });
 });
 
 test('an aggregate containing an internal defect is never retried as a network error', () => {

@@ -1,6 +1,6 @@
 import { GraphError } from './onedrive/graph.js';
 import { OneDriveAuthError } from './onedrive/auth.js';
-import { DeckRequestError } from './deck-client.js';
+import { DeckRequestError, RetryableLocalConflict } from './deck-client.js';
 
 export type RetryDecision =
   | { kind: 'retry'; notBefore: number }
@@ -66,11 +66,12 @@ export function retryDecision(error: unknown, attempts: number, now: number, jit
   // An aggregate can contain an independent defect alongside a transport error.
   if (chain.some(item => item instanceof AggregateError && aggregateHasDefect(item))) return { kind: 'review' };
   const temporaryLocal = chain.some(item => item instanceof DOMException && ['NetworkError', 'TimeoutError'].includes(item.name));
+  const localConflict = chain.some(item => item instanceof RetryableLocalConflict);
   if (chain.some(item => item instanceof OneDriveAuthError && item.code !== 'network')) return { kind: 'review' };
   const graphErrors = chain.filter((item): item is GraphError => item instanceof GraphError);
-  if (graphErrors.some(item => ![0, 429, 500, 502, 503, 504].includes(item.status))) return { kind: 'review' };
+  if (graphErrors.some(item => ![0, 409, 412, 429, 500, 502, 503, 504].includes(item.status) || ([409, 412].includes(item.status) && item.uncertain))) return { kind: 'review' };
   if (graphErrors.some(item => item.status === 0 && item.code !== 'networkError')) return { kind: 'review' };
-  if (!graphErrors.length && !temporaryLocal && !chain.some(item => item instanceof OneDriveAuthError && item.code === 'network')) return { kind: 'review' };
+  if (!graphErrors.length && !temporaryLocal && !localConflict && !chain.some(item => item instanceof OneDriveAuthError && item.code === 'network')) return { kind: 'review' };
   const serviceDeadline = serviceRetryDeadline(error, now);
   if (serviceDeadline === null) return { kind: 'review' };
   const delay = attempts < 3 ? [2000, 4000, 8000][attempts] * (1 + jitter * 0.25) : 120_000;

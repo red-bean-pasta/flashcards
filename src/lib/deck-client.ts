@@ -4,3 +4,6 @@ export class DeckRequestError extends Error {
     this.name = 'DeckRequestError';
   }
 }
+
+/** A detected local write conflict can be replanned later. */
+export class RetryableLocalConflict extends DeckRequestError {}
