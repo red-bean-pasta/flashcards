@@ -19,6 +19,7 @@
 
 # Flashcards Site Configuration
 # Replace {$DOMAIN} and {$PORT:443} with your domain and port (or use deploy/setup.sh).
+# BEGIN FLASHCARDS SITE
 https://{$DOMAIN:localhost}:{$PORT:443} {
     root * /srv/flashcards/dist
 
@@ -62,15 +63,16 @@ https://{$DOMAIN:localhost}:{$PORT:443} {
         Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.1drv.com https://*.1drv.ms https://*.live.com https://*.storage.live.com; frame-src https://onedrive.live.com https://login.microsoftonline.com https://login.live.com; form-action 'self' https://onedrive.live.com; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests;"
     }
 
-    # SPA routing: fallback to index.html for unknown paths that don't match static files
-    try_files {path} /index.html
+    # Preserve request checks before rewriting, then match the final HTML path.
+    route {
+        @dotfiles path */.*
+        respond @dotfiles 404
 
-    # Block access to hidden dotfiles (.git, .env, etc.)
-    @dotfiles path */.*
-    error @dotfiles 404
-
-    # File server with hidden dotfiles protection
-    file_server {
-        hide .*
+        try_files {path} /index.html
+        @html path /index.html
+        header @html Cache-Control "no-cache"
+        file_server {
+            hide .*
+        }
     }
 }

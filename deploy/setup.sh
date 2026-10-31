@@ -1,350 +1,307 @@
-#! /bin/bash
-
-set -eu -o pipefail
-
-# ANSI color codes
-R=$'\e[0;31m'
-G=$'\e[0;32m'
-B=$'\e[0;34m'
-Y=$'\e[0;33m'
-I=$'\e[0m'
+#!/bin/bash
+set -Eeuo pipefail
+umask 022
 
 Script_Dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-Default_App_Dir="$(cd "$Script_Dir/.." && pwd)"
-
-# Global variables
+Source_Dir="$(cd "$Script_Dir/.." && pwd)"
+Deploy_Dir=/srv/flashcards
+Caddy_Dir=/etc/caddy
 Domain="${DOMAIN:-${SERVER_DOMAIN:-}}"
 Port="${PORT:-${SERVER_PORT:-443}}"
-App_Dir="${Default_App_Dir}"
-Caddy_Dir="/etc/caddy"
 Skip_Build=false
+Txn_Dir=""
+Release_Dir=""
+Transaction_Started=false
+Committed=false
+Activation_Attempted=false
+Assets_Changed=false
+Had_Root=false
+Had_Site=false
+Old_Dist_Kind=absent
+Old_Link=""
+Legacy_Dir=""
 
-
-Log() {
-  local prefix=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -e) prefix="${R}ERROR: ${I}"; shift ;;
-      -w) prefix="${Y}WARNING: ${I}"; shift ;;
-      -s) prefix="${G}SUCCESS: ${I}"; shift ;;
-      -i) prefix="${B}INFO: ${I}"; shift ;;
-      *) break ;;
-    esac
-  done
-  echo "${prefix}$*" >&2
-}
-
+Log() { printf '%s\n' "$*" >&2; }
+Die() { Log "ERROR: $*"; exit 1; }
 
 PrintHelp() {
-  cat <<EOF
-Flashcards Caddy Deployment Script
+  cat <<'HELP'
+Flashcards deployment (existing, active Caddyfile-based caddy.service required)
 
 Usage:
-  DOMAIN=flashcards.example.com [PORT=443] sudo -E ./setup.sh [OPTIONS]
-  sudo ./setup.sh --domain flashcards.example.com [--port 443] [OPTIONS]
+  sudo ./deploy/setup.sh --domain flashcards.example.com [--port 443]
+  sudo DOMAIN=flashcards.example.com PORT=443 ./deploy/setup.sh
 
 Options:
-  -d, --domain <domain>    Domain name for the site (overrides DOMAIN/SERVER_DOMAIN env)
-  -p, --port <port>        Port to bind HTTPS (default: 443, overrides PORT/SERVER_PORT env)
-  -a, --app-dir <dir>      Path to the Flashcards application directory (default: $Default_App_Dir)
-  -c, --caddy-dir <dir>    Path to Caddy configuration directory (default: /etc/caddy)
-      --skip-build         Skip running 'npm ci && npm run build'
-  -h, --help               Show this help message
+  -d, --domain <hostname>  DNS hostname (DOMAIN / SERVER_DOMAIN)
+  -p, --port <port>        HTTPS port, 1-65535 (PORT / SERVER_PORT; default 443)
+      --skip-build         Deploy an existing dist/ built as an unprivileged user
+  -h, --help               Show help
 
-Environment Variables:
-  DOMAIN / SERVER_DOMAIN   Domain name for Flashcards
-  PORT / SERVER_PORT       Port number (default: 443)
-EOF
+By default, npm ci and npm run build run as the non-root SUDO_USER.
+Direct root invocation must use --skip-build. Building requires Node.js >=22.12.
+Assets are served at /srv/flashcards/dist; Caddy uses /etc/caddy/Caddyfile.
+The service reload validates and provisions configuration in its own environment.
+No Caddy environment file is read by this script. Existing global options are kept.
+HELP
 }
-
-
-CheckIfRoot() {
-  if [[ "$EUID" -ne 0 ]]; then
-    Log -e "Root privileges required. Please run with sudo: sudo DOMAIN=... $0"
-    exit 1
-  fi
-}
-
-
-CheckIfValidPort() {
-  local port="${1:-}"
-  if [[ "$port" =~ ^[0-9]+$ ]] && (( 10#"$port" >= 1 && 10#"$port" <= 65535 )); then
-    return 0
-  fi
-  return 1
-}
-
 
 ParseArgs() {
-  while [[ $# -gt 0 ]]; do
+  while (( $# )); do
     case "$1" in
-      -d|--domain)
-        [[ $# -ge 2 ]] || { Log -e "Option '$1' requires an argument"; exit 1; }
-        Domain="$2"
-        shift 2
-        ;;
-      -p|--port)
-        [[ $# -ge 2 ]] || { Log -e "Option '$1' requires an argument"; exit 1; }
-        Port="$2"
-        shift 2
-        ;;
-      -a|--app-dir)
-        [[ $# -ge 2 ]] || { Log -e "Option '$1' requires an argument"; exit 1; }
-        App_Dir="$2"
-        shift 2
-        ;;
-      -c|--caddy-dir)
-        [[ $# -ge 2 ]] || { Log -e "Option '$1' requires an argument"; exit 1; }
-        Caddy_Dir="$2"
-        shift 2
-        ;;
-      --skip-build)
-        Skip_Build=true
-        shift
-        ;;
-      -h|--help)
-        PrintHelp
-        exit 0
-        ;;
-      *)
-        if [[ -z "$Domain" ]]; then
-          Domain="$1"
-          shift
-        else
-          Log -e "Unknown argument: $1"
-          PrintHelp
-          exit 1
-        fi
-        ;;
+      -d|--domain|-p|--port)
+        (( $# >= 2 )) || Die "Option $1 requires an argument"
+        case "$1" in
+          -d|--domain) Domain="$2" ;;
+          -p|--port) Port="$2" ;;
+        esac
+        shift 2 ;;
+      --skip-build) Skip_Build=true; shift ;;
+      -h|--help) PrintHelp; exit 0 ;;
+      *) Die "Unknown argument: $1" ;;
     esac
   done
 }
 
-
 ValidateInputs() {
-  if [[ -z "$Domain" ]]; then
-    if [[ -t 0 ]]; then
-      read -rp "Enter domain for Flashcards (e.g. flashcards.example.com): " Domain
-      Domain="$(echo "$Domain" | xargs)"
-    fi
-  fi
-
-  if [[ -z "$Domain" ]]; then
-    Log -e "Domain is required. Set DOMAIN environment variable or pass --domain <domain>."
-    exit 1
-  fi
-
-  if ! CheckIfValidPort "$Port"; then
-    Log -e "Invalid port '$Port'. Must be an integer between 1 and 65535."
-    exit 1
-  fi
-
-  if [[ ! -d "$App_Dir" ]]; then
-    Log -e "App directory '$App_Dir' does not exist."
-    exit 1
-  fi
+  [[ -n "$Domain" ]] || Die 'Set DOMAIN or pass --domain <hostname>.'
+  Domain="${Domain,,}"
+  [[ ${#Domain} -le 253 ]] || Die 'Hostname exceeds 253 characters.'
+  local label
+  local -a labels
+  IFS=. read -r -a labels <<< "$Domain"
+  [[ "$Domain" != *. && "$Domain" != *..* && "$Domain" != *$'\n'* ]] || Die 'Invalid DNS hostname.'
+  for label in "${labels[@]}"; do
+    [[ ${#label} -le 63 && "$label" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$ ]] || Die 'Invalid DNS hostname.'
+  done
+  [[ "$Port" =~ ^[0-9]{1,5}$ ]] || Die 'Port must be an integer between 1 and 65535.'
+  Port=$((10#$Port))
+  (( Port >= 1 && Port <= 65535 )) || Die 'Port must be between 1 and 65535.'
+  [[ "$Source_Dir" != "$Deploy_Dir" && "$Source_Dir" != "$Deploy_Dir/"* ]] || Die 'Keep the source repository outside /srv/flashcards.'
+  [[ -f "$Source_Dir/package.json" ]] || Die 'Source package.json is missing.'
 }
 
+CheckPrerequisites() {
+  (( EUID == 0 )) || Die 'Run deployment with sudo (see --help).'
+  local command_name
+  for command_name in caddy systemctl python3 flock; do
+    command -v "$command_name" >/dev/null || Die "Required command missing: $command_name"
+  done
+  [[ "$(systemctl show -p LoadState --value caddy.service)" == loaded ]] || Die 'caddy.service must be installed.'
+  systemctl is-active --quiet caddy.service || Die 'Start the Caddyfile-based caddy.service before deploying.'
+  # Serialize deployments before building or modifying shared files.
+  exec 9>/run/lock/flashcards-deploy.lock
+  flock -n 9 || Die 'Another Flashcards deployment is running.'
+  [[ ! -L "$Caddy_Dir/Caddyfile" && ! -L "$Caddy_Dir/conf.d/flashcards.caddy" ]] || Die 'Managed Caddy files must be regular files, not symlinks.'
+}
 
 BuildProject() {
-  if [[ "$Skip_Build" == "true" ]]; then
-    Log -i "Skipping project build (--skip-build requested)"
-    return 0
-  fi
-
-  Log -i "Checking Node.js and npm..."
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    Log -e "Node.js and npm are required to build the frontend. Please install Node.js 20+."
-    exit 1
-  fi
-
-  Log -i "Building Flashcards in $App_Dir..."
-  (
-    cd "$App_Dir"
+  "$Skip_Build" && return 0
+  [[ -n "${SUDO_USER:-}" ]] || Die 'Root must use --skip-build with assets built beforehand as an unprivileged user.'
+  local build_uid
+  build_uid="$(id -u -- "$SUDO_USER")" || Die 'Unknown SUDO_USER.'
+  [[ "$build_uid" != 0 ]] || Die 'Refusing to build as root; use --skip-build.'
+  command -v runuser >/dev/null || Die 'runuser is required for an unprivileged build.'
+  Log "Building as $SUDO_USER..."
+  # The child shell expands its own arguments and variables.
+  # shellcheck disable=SC2016
+  runuser -u "$SUDO_USER" -- bash -c '
+    set -euo pipefail
+    cd "$1"
+    command -v node >/dev/null && command -v npm >/dev/null || { echo "Node.js >=22.12 and npm are required for the build user." >&2; exit 1; }
+    node -e '\''const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 12)) { console.error("Node.js >=22.12 is required."); process.exit(1); }'\''
     npm ci
     npm run build
-  )
-
-  local dist_dir="$App_Dir/dist"
-  if [[ ! -d "$dist_dir" || ! -f "$dist_dir/index.html" ]]; then
-    Log -e "Build completed but '$dist_dir/index.html' was not found."
-    exit 1
-  fi
-
-  # Ensure Caddy can read the compiled static assets
-  chmod -R a+rX "$dist_dir"
-  Log -s "Frontend assets built successfully in $dist_dir"
+  ' bash "$Source_Dir" 9>&-
 }
 
+StageAssets() {
+  local dist_dir="$Source_Dir/dist"
+  [[ -d "$dist_dir" && ! -L "$dist_dir" && -f "$dist_dir/index.html" ]] || Die 'Build dist/index.html first or run without --skip-build.'
+  # Do not publish links to files outside the build output, or special files.
+  [[ -z "$(find "$dist_dir" ! -type f ! -type d -print -quit)" ]] || Die 'Build output must contain only regular files and directories.'
+  install -d -m 755 "$Deploy_Dir" "$Deploy_Dir/releases"
+  Release_Dir="$(mktemp -d "$Deploy_Dir/releases/release.XXXXXXXX")"
+  cp -R "$dist_dir/." "$Release_Dir/"
+  chown -R root:root "$Release_Dir"
+  find "$Release_Dir" -type d -exec chmod 755 {} +
+  find "$Release_Dir" -type f -exec chmod 644 {} +
+}
+
+BeginTransaction() {
+  [[ -d "$Caddy_Dir" ]] || install -d -m 755 "$Caddy_Dir"
+  [[ -d "$Caddy_Dir/conf.d" ]] || install -d -m 755 "$Caddy_Dir/conf.d"
+  Txn_Dir="$(mktemp -d "$Caddy_Dir/.flashcards-deploy.XXXXXXXX")"
+  if [[ -e "$Caddy_Dir/Caddyfile" ]]; then
+    [[ -f "$Caddy_Dir/Caddyfile" ]] || Die 'Caddyfile must be a regular file.'
+    cp -p "$Caddy_Dir/Caddyfile" "$Txn_Dir/Caddyfile"
+    Had_Root=true
+  fi
+  if [[ -e "$Caddy_Dir/conf.d/flashcards.caddy" ]]; then
+    [[ -f "$Caddy_Dir/conf.d/flashcards.caddy" ]] || Die 'Site configuration must be a regular file.'
+    cp -p "$Caddy_Dir/conf.d/flashcards.caddy" "$Txn_Dir/flashcards.caddy"
+    Had_Site=true
+  fi
+  if [[ -L "$Deploy_Dir/dist" ]]; then
+    Old_Dist_Kind=symlink
+    Old_Link="$(readlink "$Deploy_Dir/dist")"
+  elif [[ -d "$Deploy_Dir/dist" ]]; then
+    Old_Dist_Kind=directory
+    Legacy_Dir="$Deploy_Dir/releases/legacy.${Release_Dir##*/}"
+  elif [[ -e "$Deploy_Dir/dist" ]]; then
+    Die 'Existing dist must be a directory or symlink.'
+  fi
+  Transaction_Started=true
+}
+
+WriteSiteConfig() {
+  # Render the example's site block so script and documented configuration cannot drift.
+  python3 - "$Script_Dir/Caddyfile.example" "$Txn_Dir/site.new" "$Domain" "$Port" "${Release_Dir##*/}" <<'PY'
+import pathlib, sys
+source, dest, domain, port, marker = sys.argv[1:]
+raw = pathlib.Path(source).read_text().replace('\r\n', '\n')
+site = raw.split('# BEGIN FLASHCARDS SITE\n', 1)[1]
+site = site.replace('https://{$DOMAIN:localhost}:{$PORT:443} {',
+                    f'https://{domain}:{port} {{\n    vars flashcards_deployment {marker}')
+pathlib.Path(dest).write_text(site)
+PY
+  install -m 644 "$Txn_Dir/site.new" "$Caddy_Dir/conf.d/.flashcards.new"
+  mv -f "$Caddy_Dir/conf.d/.flashcards.new" "$Caddy_Dir/conf.d/flashcards.caddy"
+}
+
+AdaptConfig() {
+  # Adaptation checks syntax without provisioning TLS or requiring service-only secrets.
+  # JSON/errors can contain private configuration: never print them and remove on exit.
+  if ! caddy adapt --config "$Caddy_Dir/Caddyfile" --adapter caddyfile >"$Txn_Dir/adapt.json" 2>"$Txn_Dir/adapt.err"; then
+    Die 'Caddy syntax check failed. Configuration will be restored; private diagnostics were not printed.'
+  fi
+}
+
+CountSiteImports() {
+  python3 - "$Txn_Dir/adapt.json" "${Release_Dir##*/}" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1]))
+def count(value):
+    if isinstance(value, dict):
+        return int(value.get('handler') == 'vars' and value.get('flashcards_deployment') == sys.argv[2]) + sum(map(count, value.values()))
+    if isinstance(value, list):
+        return sum(map(count, value))
+    return 0
+print(count(config))
+PY
+}
 
 ConfigureCaddy() {
-  local root_caddyfile="$Caddy_Dir/Caddyfile"
-  local conf_d="$Caddy_Dir/conf.d"
-  local site_config="$conf_d/flashcards.caddy"
-  local site_address
-
-  if [[ "$Port" -eq 443 ]]; then
-    site_address="https://${Domain}"
-  else
-    site_address="https://${Domain}:${Port}"
+  WriteSiteConfig
+  if ! "$Had_Root"; then
+    printf 'import conf.d/*.caddy\n' > "$Caddy_Dir/Caddyfile"
+    chmod 644 "$Caddy_Dir/Caddyfile"
   fi
-
-  Log -i "Configuring Caddy for $site_address..."
-  mkdir -p "$conf_d"
-
-  local backup_created=false
-  local backup_path=""
-
-  if [[ -f "$root_caddyfile" ]]; then
-    local timestamp; timestamp="$(date +%s)"
-    backup_path="${root_caddyfile}.bak.${timestamp}"
-    cp "$root_caddyfile" "$backup_path"
-    if [[ ! -f "${root_caddyfile}.bak" ]]; then
-      cp "$root_caddyfile" "${root_caddyfile}.bak"
-    fi
-    backup_created=true
-    Log -i "Created backup of existing Caddyfile at $backup_path"
-
-    # Check silently if conf.d is already imported
-    if ! grep -qE "import[[:space:]]+(conf\.d/|\"$Caddy_Dir/conf\.d/|/etc/caddy/conf\.d/)" "$root_caddyfile"; then
-      Log -i "Appending 'import conf.d/*.caddy' to $root_caddyfile"
-      printf "\n# Added by Flashcards deployment script\nimport conf.d/*.caddy\n" >> "$root_caddyfile"
-    else
-      Log -i "Existing Caddyfile already imports conf.d"
-    fi
-  else
-    Log -i "Creating root $root_caddyfile with conf.d import"
-    cat << 'EOF' > "$root_caddyfile"
-# Caddyfile created by Flashcards deployment
-import conf.d/*.caddy
-EOF
+  AdaptConfig
+  local count
+  count="$(CountSiteImports)"
+  if [[ "$count" == 0 ]]; then
+    # Determine inclusion from Caddy's actual parsed configuration, never grep guesses.
+    printf '\n# Flashcards sites\nimport conf.d/*.caddy\n' >> "$Caddy_Dir/Caddyfile"
+    AdaptConfig
+    count="$(CountSiteImports)"
   fi
-
-  Log -i "Writing site configuration to $site_config"
-  cat << EOF > "$site_config"
-# Flashcards site configuration
-# Domain: ${Domain}
-# Port: ${Port}
-
-${site_address} {
-    root * ${App_Dir}/dist
-
-    # Static compression
-    encode zstd gzip
-
-    # Request limits for static hosting without reverse proxy / DDoS shield
-    request_body {
-        max_size 10KB
-    }
-
-    # Restrict HTTP methods to read-only static asset requests
-    @disallowed_methods not method GET HEAD OPTIONS
-    error @disallowed_methods 405
-
-    # Security headers
-    header {
-        # Strip Server header to prevent fingerprinting
-        -Server
-
-        # Enforce HTTPS strictly (1 year, subdomains, preload)
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-
-        # Prevent MIME type sniffing
-        X-Content-Type-Options "nosniff"
-
-        # Deny clickjacking / embedding Flashcards inside other sites
-        X-Frame-Options "DENY"
-
-        # Referrer policy
-        Referrer-Policy "strict-origin-when-cross-origin"
-
-        # Restrict browser feature permissions
-        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-
-        # Content Security Policy:
-        # - Tightened connect-src to origin and Microsoft auth/graph/storage endpoints
-        # - style-src unsafe-inline allowed for Svelte dynamic inline style variables
-        # - frame-src and form-action for OneDrive picker and OAuth
-        # - upgrade-insecure-requests forces HTTPS on all requests
-        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.1drv.com https://*.1drv.ms https://*.live.com https://*.storage.live.com; frame-src https://onedrive.live.com https://login.microsoftonline.com https://login.live.com; form-action 'self' https://onedrive.live.com; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests;"
-    }
-
-    # SPA routing: serve index.html for client-side routes
-    try_files {path} /index.html
-
-    # File server with hidden dotfiles protection
-    file_server {
-        hide .*
-    }
-
-    # Explicitly deny dotfiles with 404
-    @dotfiles path */.*
-    error @dotfiles 404
-}
-EOF
-
-  # Validate configuration with Caddy
-  if command -v caddy >/dev/null 2>&1; then
-    Log -i "Validating Caddy configuration..."
-    if ! caddy validate --config "$root_caddyfile" >/dev/null 2>&1; then
-      Log -e "Caddy configuration validation failed!"
-      if [[ "$backup_created" == "true" && -n "$backup_path" ]]; then
-        Log -w "Rolling back Caddyfile to $backup_path"
-        cp "$backup_path" "$root_caddyfile"
-      fi
-      rm -f "$site_config"
-      exit 1
-    fi
-    Log -s "Caddy configuration validated successfully"
-  else
-    Log -w "caddy command not found in PATH; skipping validation"
-  fi
+  [[ "$count" == 1 ]] || Die 'Flashcards must be imported exactly once at site level.'
 }
 
+ActivateAssets() {
+  Assets_Changed=true
+  if [[ "$Old_Dist_Kind" == directory ]]; then
+    mv "$Deploy_Dir/dist" "$Legacy_Dir"
+  fi
+  ln -s "$Release_Dir" "$Deploy_Dir/.dist.next.${Release_Dir##*/}"
+  mv -Tf "$Deploy_Dir/.dist.next.${Release_Dir##*/}" "$Deploy_Dir/dist"
+}
 
 ReloadCaddy() {
-  Log -i "Reloading Caddy service..."
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files caddy.service >/dev/null 2>&1; then
-    if systemctl is-active --quiet caddy; then
-      systemctl reload caddy
-      Log -s "Caddy service reloaded successfully"
-    else
-      systemctl start caddy
-      Log -s "Caddy service started successfully"
-    fi
-  elif command -v caddy >/dev/null 2>&1; then
-    if caddy reload --config "$Caddy_Dir/Caddyfile" >/dev/null 2>&1; then
-      Log -s "Caddy reloaded via caddy CLI"
-    else
-      Log -w "Could not reload Caddy automatically. Please run: sudo systemctl reload caddy"
-    fi
-  else
-    Log -w "Unable to reload Caddy automatically. Please restart or reload Caddy."
-  fi
+  Activation_Attempted=true
+  # ExecReload runs with the service's Environment/EnvironmentFile and identity.
+  # Caddy validates/provisions before replacing its running configuration.
+  systemctl reload caddy.service || Die 'Caddy reload failed; restoring configuration and assets.'
+  systemctl is-active --quiet caddy.service || Die 'Caddy is no longer active; restoring deployment.'
 }
 
+RestoreConfig() {
+  local result=0
+  if "$Had_Root"; then
+    cp -p "$Txn_Dir/Caddyfile" "$Caddy_Dir/Caddyfile" || result=1
+  else
+    rm -f "$Caddy_Dir/Caddyfile" || result=1
+  fi
+  if "$Had_Site"; then
+    cp -p "$Txn_Dir/flashcards.caddy" "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
+  else
+    rm -f "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
+  fi
+  return "$result"
+}
+
+RestoreAssets() {
+  "$Assets_Changed" || return 0
+  case "$Old_Dist_Kind" in
+    symlink)
+      ln -s "$Old_Link" "$Deploy_Dir/.dist.restore.${Release_Dir##*/}" || return 1
+      mv -Tf "$Deploy_Dir/.dist.restore.${Release_Dir##*/}" "$Deploy_Dir/dist" || return 1 ;;
+    directory)
+      if [[ -d "$Legacy_Dir" ]]; then
+        if [[ -L "$Deploy_Dir/dist" ]]; then rm "$Deploy_Dir/dist" || return 1; fi
+        mv "$Legacy_Dir" "$Deploy_Dir/dist" || return 1
+      fi ;;
+    absent) rm -f "$Deploy_Dir/dist" || return 1 ;;
+  esac
+}
+
+Finish() {
+  local status=$? rollback_ok=true
+  trap - EXIT INT TERM HUP
+  set +e
+  if ! "$Committed"; then
+    if "$Transaction_Started"; then
+      RestoreConfig || rollback_ok=false
+      RestoreAssets || rollback_ok=false
+      if "$Activation_Attempted"; then
+        systemctl reload caddy.service || rollback_ok=false
+        systemctl is-active --quiet caddy.service || rollback_ok=false
+      fi
+      if "$rollback_ok"; then
+        Log 'Previous deployment restored.'
+      else
+        Log "ERROR: Rollback failed; recover using backups in $Txn_Dir."
+      fi
+    fi
+    # Retain a release if rollback failed, so any active symlink remains valid.
+    if "$rollback_ok" && [[ -n "$Release_Dir" ]]; then rm -rf -- "$Release_Dir"; fi
+    (( status != 0 )) || status=1
+  fi
+  if [[ -n "$Txn_Dir" ]]; then
+    rm -f "$Txn_Dir/adapt.json" "$Txn_Dir/adapt.err" "$Txn_Dir/site.new" "$Caddy_Dir/conf.d/.flashcards.new"
+  fi
+  rm -f "$Deploy_Dir/.dist.next.${Release_Dir##*/}" "$Deploy_Dir/.dist.restore.${Release_Dir##*/}"
+  exit "$status"
+}
 
 Main() {
   ParseArgs "$@"
-  CheckIfRoot
   ValidateInputs
-
-  Log -s "Starting Flashcards Caddy deployment"
-  Log -i "Domain: $Domain"
-  Log -i "Port:   $Port"
-  Log -i "App:    $App_Dir"
-
+  CheckPrerequisites
+  trap Finish EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
   BuildProject
+  StageAssets
+  BeginTransaction
   ConfigureCaddy
+  ActivateAssets
   ReloadCaddy
-
-  local live_url="https://${Domain}"
-  if [[ "$Port" -ne 443 ]]; then
-    live_url="https://${Domain}:${Port}"
-  fi
-
-  echo
-  Log -s "Deployment complete! Flashcards is live at $live_url"
+  Committed=true
+  Log "Deployment complete: https://${Domain}:${Port}"
+  Log "Configuration backups: $Txn_Dir (previous asset releases retained)."
 }
 
 Main "$@"
