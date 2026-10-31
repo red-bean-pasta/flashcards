@@ -1,0 +1,76 @@
+# Global options block
+# Note: In Caddyfile, global options must only appear once, at the very top of the root Caddyfile.
+# If your server already has /etc/caddy/Caddyfile, keep its existing global options.
+{
+    # Global ACME DNS challenge via Cloudflare plugin (if using Cloudflare DNS token)
+    # acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+    # Optional: Tighten server timeouts against Slowloris when directly exposed without DDoS proxy
+    # servers {
+    #     timeouts {
+    #         read_body 10s
+    #         read_header 10s
+    #         write 30s
+    #         idle 1m
+    #     }
+    #     max_header_size 16kb
+    # }
+}
+
+# Flashcards Site Configuration
+# Replace {$DOMAIN} and {$PORT:443} with your domain and port (or use deploy/setup.sh).
+https://{$DOMAIN:localhost}:{$PORT:443} {
+    root * /srv/flashcards/dist
+
+    # Static compression
+    encode zstd gzip
+
+    # Request limits (defense-in-depth for origin servers directly exposed without DDoS proxy)
+    request_body {
+        max_size 10KB
+    }
+
+    # Restrict HTTP methods to read-only static requests
+    @disallowed_methods not method GET HEAD OPTIONS
+    error @disallowed_methods 405
+
+    # Security headers
+    header {
+        # Strip Server header to prevent fingerprinting
+        -Server
+
+        # Enforce HTTPS strictly (1 year, subdomains, preload)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+
+        # Block framing entirely (Flashcards is not framed; OneDrive picker uses iframe inside Flashcards)
+        X-Frame-Options "DENY"
+
+        # Referrer Policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        # Restrict browser feature permissions
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+
+        # Content Security Policy:
+        # - Tightened connect-src to origin and Microsoft auth/graph/storage endpoints
+        # - style-src unsafe-inline allowed for Svelte dynamic inline style variables
+        # - frame-src and form-action for OneDrive picker and OAuth
+        # - upgrade-insecure-requests forces HTTPS on all requests
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.1drv.com https://*.1drv.ms https://*.live.com https://*.storage.live.com; frame-src https://onedrive.live.com https://login.microsoftonline.com https://login.live.com; form-action 'self' https://onedrive.live.com; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests;"
+    }
+
+    # SPA routing: fallback to index.html for unknown paths that don't match static files
+    try_files {path} /index.html
+
+    # Block access to hidden dotfiles (.git, .env, etc.)
+    @dotfiles path */.*
+    error @dotfiles 404
+
+    # File server with hidden dotfiles protection
+    file_server {
+        hide .*
+    }
+}
