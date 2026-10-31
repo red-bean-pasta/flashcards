@@ -230,11 +230,12 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
 
   return {
     async driveId(): Promise<string> {
-      const value = await responseJson(await request(`${BASE}/me/drive`), false);
-      if (!isRecord(value) || typeof value.id !== 'string' || !value.id) throw invalidResponse(false);
-      return value.id;
+      const root = requireFolder(await itemRequest(`${BASE}/me/drive/special/approot`));
+      const id = root.parentReference?.driveId;
+      if (!id) throw invalidResponse(false);
+      return id;
     },
-    root: async () => requireFolder(await itemRequest(`${BASE}/me/drive/root`)),
+    root: async () => requireFolder(await itemRequest(`${BASE}/me/drive/special/approot`)),
     getItem,
     children,
     async findChild(parentId: string, name: string): Promise<GraphItem | null> {

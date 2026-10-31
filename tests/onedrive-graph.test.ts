@@ -106,10 +106,13 @@ test('authorization and throttling require explicit reconnect/retry; root valida
   assert.equal(calls.length, 3);
 });
 
-test('drive identity is read from the drive resource and validated', async () => {
-  const { client } = fake([Response.json({ id: 'account-drive' }), Response.json({})]);
+test('app root and drive identity use the scoped special folder', async () => {
+  const folder = { id: 'app-root', name: 'Flashcards', folder: {}, parentReference: { driveId: 'account-drive' } };
+  const { client, calls } = fake([Response.json(folder), Response.json(folder), Response.json({ id: 'app-root', name: 'Flashcards', folder: {} })]);
+  assert.equal((await client.root()).id, 'app-root');
   assert.equal(await client.driveId(), 'account-drive');
   await assert.rejects(client.driveId(), GraphError);
+  assert.ok(calls.every(call => call.url === `${BASE}/me/drive/special/approot`));
 });
 
 function interruptedBody(error: Error, status = 200): Response {

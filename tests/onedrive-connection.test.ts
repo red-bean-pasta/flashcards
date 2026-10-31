@@ -36,3 +36,15 @@ test('folder memory reports unavailable storage', () => {
   assert.throws(() => memory.recall('root'), error => error instanceof Error && error.cause === unavailable);
   assert.throws(() => memory.remember('A', 'root'), error => error instanceof Error && error.cause === unavailable);
 });
+
+test('default and old folder memory resolve to the app root', async () => {
+  const graph = { root: async () => root, driveId: async () => 'drive' } as GraphClient;
+  const storage = new Map<string, string>();
+  const memory = createFolderMemory('client', () => ({ getItem: key => storage.get(key) ?? null, setItem: (key, value) => { storage.set(key, value); } }));
+  memory.remember('old-folder', 'old-drive-root');
+  const states: any[] = [];
+  const connection = createFolderConnection(graph, memory, state => states.push(state));
+  await connection.restore();
+  assert.equal(states[0].folder.id, root.id);
+  assert.equal(memory.recall(root.id), root.id);
+});

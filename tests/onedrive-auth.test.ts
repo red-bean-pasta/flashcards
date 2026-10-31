@@ -32,7 +32,7 @@ test('personal-account sign-in uses S256 PKCE, state, delegated scopes and sessi
   assert.equal(new URL(s.navigate()).pathname, '/consumers/oauth2/v2.0/authorize');
   assert.equal(params.get('code_challenge_method'), 'S256');
   assert.equal(params.get('response_type'), 'code');
-  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite OneDrive.ReadWrite');
+  assert.equal(params.get('scope'), 'offline_access https://graph.microsoft.com/Files.ReadWrite.AppFolder OneDrive.AppFolder');
   assert.equal(await s.auth.completeSignIn(), true);
   assert.equal(s.location.href, 'https://cards.example/app');
   const body = s.calls[0].body;
@@ -164,44 +164,6 @@ test('unavailable session storage is actionable and consumed-body contract error
   assert.throws(() => auth.isConnected(), error => error instanceof OneDriveAuthError && error.code === 'storage' && error.cause === storageError);
 });
 
-test('picker uses its own interactive authorization and preserves the Graph session', async () => {
-  const s = setup();
-  await s.callback();
-  await s.auth.completeSignIn();
-  assert.equal(s.auth.hasPickerAuthorization(), false);
-  await s.auth.startPickerSignIn();
-  const params = new URL(s.navigate()).searchParams;
-  assert.equal(params.get('scope'), 'offline_access OneDrive.ReadWrite');
-  s.location.href = `https://cards.example/app?code=picker-code&state=${params.get('state')}`;
-  s.transport(async () => Response.json({ access_token: 'picker', refresh_token: 'picker-refresh', token_type: 'Bearer', expires_in: 3600 }));
-  await s.auth.completeSignIn();
-  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
-  assert.equal(await s.auth.getPickerToken(), 'picker');
-  assert.equal(await s.auth.getAccessToken(), 'access');
-  s.advance(3_600_000);
-  s.transport(async () => Response.json({ access_token: 'picker-new', token_type: 'Bearer', expires_in: 3600 }));
-  assert.equal(await s.auth.getPickerToken(), 'picker-new');
-  assert.equal(s.calls[2].body.get('refresh_token'), 'picker-refresh');
-  await s.callback();
-  await s.auth.completeSignIn();
-  assert.equal(s.auth.hasPickerAuthorization(), false, 'Graph reconnection invalidates picker authorization');
-  s.auth.disconnect();
-});
-
-
-test('picker obtains its token from the connected session without another redirect', async () => {
-  const s = setup();
-  await s.callback();
-  await s.auth.completeSignIn();
-  s.transport(async () => Response.json({ access_token: 'picker', refresh_token: 'picker-refresh', token_type: 'Bearer', expires_in: 3600 }));
-  assert.equal(await s.auth.getPickerToken(), 'picker');
-  assert.equal(s.calls[1].body.get('grant_type'), 'refresh_token');
-  assert.equal(s.calls[1].body.get('refresh_token'), 'refresh');
-  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
-  assert.equal(await s.auth.getPickerToken(), 'picker');
-  assert.equal(s.calls.length, 2);
-});
-
 test('automatic sign-in lets Microsoft reuse its existing login session', async () => {
   const s = setup();
   await s.auth.startAutomaticSignIn();
@@ -209,4 +171,18 @@ test('automatic sign-in lets Microsoft reuse its existing login session', async 
   assert.equal(params.has('prompt'), false);
   assert.ok(params.get('state'));
   assert.equal(params.get('code_challenge_method'), 'S256');
+});
+
+test('legacy broad-scope sessions are not reused', () => {
+  const s = setup();
+  s.values.set('flashcards.onedrive.test-client.https%3A%2F%2Fcards.example%2Fapp.tokens', JSON.stringify({ accessToken: 'old', expiresAt: 9999999999999 }));
+  assert.equal(s.auth.isConnected(), false);
+});
+
+test('picker token requests only OneDrive app-folder access', async () => {
+  const s = setup();
+  await s.callback();
+  await s.auth.completeSignIn();
+  assert.equal(await s.auth.getPickerToken(), 'access');
+  assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.AppFolder');
 });

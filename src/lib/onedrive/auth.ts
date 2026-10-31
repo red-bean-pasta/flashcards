@@ -1,8 +1,8 @@
 /** Browser-only OAuth authorization-code flow for a personal OneDrive account. */
 const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
-const SCOPES = 'offline_access https://graph.microsoft.com/Files.ReadWrite';
-const PICKER_SCOPES = 'offline_access OneDrive.ReadWrite';
-const CONNECTION_SCOPES = `${SCOPES} OneDrive.ReadWrite`;
+const SCOPES = 'offline_access https://graph.microsoft.com/Files.ReadWrite.AppFolder';
+const PICKER_SCOPES = 'offline_access OneDrive.AppFolder';
+const CONNECTION_SCOPES = `${SCOPES} OneDrive.AppFolder`;
 const PENDING_LIFETIME_MS = 10 * 60 * 1000;
 
 export type OneDriveAuthErrorCode = 'configuration' | 'reconnect_required' | 'oauth' | 'network' | 'invalid_response' | 'storage';
@@ -25,7 +25,7 @@ export interface OneDriveAuthDependencies {
   history?: Pick<History, 'replaceState'>;
   now?: () => number;
 }
-interface PendingSignIn { state: string; verifier: string; createdAt: number; purpose?: 'picker' }
+interface PendingSignIn { state: string; verifier: string; createdAt: number }
 interface Tokens { accessToken: string; refreshToken?: string; expiresAt: number }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,8 +34,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isPending(value: unknown): value is PendingSignIn {
   return isRecord(value) && typeof value.state === 'string' && value.state.length > 0
     && typeof value.verifier === 'string' && value.verifier.length >= 43
-    && typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
-    && (value.purpose === undefined || value.purpose === 'picker');
+    && typeof value.createdAt === 'number' && Number.isFinite(value.createdAt);
 }
 function isTokens(value: unknown): value is Tokens {
   return isRecord(value) && typeof value.accessToken === 'string' && value.accessToken.length > 0
@@ -70,7 +69,7 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
   const crypto = dependencies.crypto ?? globalThis.crypto;
   const request = dependencies.fetch ?? globalThis.fetch;
   const now = dependencies.now ?? Date.now;
-  const prefix = `flashcards.onedrive.${encodeURIComponent(config.clientId)}.${encodeURIComponent(redirect.href)}.`;
+  const prefix = `flashcards.onedrive.appfolder.${encodeURIComponent(config.clientId)}.${encodeURIComponent(redirect.href)}.`;
   let generation = 0;
   let refreshing: Promise<string> | undefined;
   let tokenQueue: Promise<void> = Promise.resolve();
@@ -98,23 +97,23 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     generation++;
     refreshing = undefined;
     removeStored('tokens');
-    removeStored('pending');
     removeStored('pickerTokens');
+    removeStored('pending');
   }
   function assertCurrent(expected: number) {
     if (generation !== expected) throw new OneDriveAuthError('OneDrive was disconnected while authentication was in progress. Reconnect to continue.', 'reconnect_required');
   }
-  async function startSignIn(purpose?: 'picker', automatic = false): Promise<void> {
+  async function startSignIn(automatic = false): Promise<void> {
     if (new URL(location.href).origin !== redirect.origin) throw new OneDriveAuthError('OneDrive redirect URI must use this app’s origin.', 'configuration');
     const expected = ++generation;
     const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
     const state = base64Url(crypto.getRandomValues(new Uint8Array(32)));
     const challenge = base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
     assertCurrent(expected);
-    saveStored('pending', { state, verifier, createdAt: now(), ...(purpose ? { purpose } : {}) });
+    saveStored('pending', { state, verifier, createdAt: now() });
     const url = new URL(`${AUTHORITY}/authorize`);
     url.search = new URLSearchParams({ client_id: config.clientId, response_type: 'code', redirect_uri: redirect.href,
-      response_mode: 'query', scope: purpose === 'picker' ? PICKER_SCOPES : CONNECTION_SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', ...(automatic ? {} : { prompt: 'select_account' }) }).toString();
+      response_mode: 'query', scope: CONNECTION_SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256', ...(automatic ? {} : { prompt: 'select_account' }) }).toString();
     location.assign(url.href);
   }
   async function fetchToken(parameters: Record<string, string>, oldRefreshToken?: string, scope = SCOPES): Promise<Tokens> {
@@ -180,10 +179,10 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     const code = query.get('code');
     if (!code) throw new OneDriveAuthError('Microsoft did not return an authorization code.', 'oauth');
     const expected = generation;
-    const tokens = await fetchToken({ grant_type: 'authorization_code', code, code_verifier: pending.verifier }, undefined, pending.purpose === 'picker' ? PICKER_SCOPES : SCOPES);
+    const tokens = await fetchToken({ grant_type: 'authorization_code', code, code_verifier: pending.verifier });
     assertCurrent(expected);
-    if (pending.purpose !== 'picker') removeStored('pickerTokens');
-    saveStored(pending.purpose === 'picker' ? 'pickerTokens' : 'tokens', tokens);
+    removeStored('pickerTokens');
+    saveStored('tokens', tokens);
     return true;
   }
   async function refresh(tokens: Tokens): Promise<string> {
@@ -215,28 +214,22 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     tokenQueue = result.then(() => undefined, () => undefined);
     return result;
   }
-  function hasPickerAuthorization(): boolean { return readStored('pickerTokens', isTokens) !== undefined; }
   function getPickerToken(): Promise<string> {
     return enqueueTokenRequest(async () => {
-      const pickerTokens = readStored('pickerTokens', isTokens);
-      const tokens = pickerTokens ?? readStored('tokens', isTokens);
+      const picker = readStored('pickerTokens', isTokens);
+      const tokens = picker ?? readStored('tokens', isTokens);
       if (!tokens) throw new OneDriveAuthError('Connect OneDrive to choose a folder.', 'reconnect_required');
-      if (pickerTokens && pickerTokens.expiresAt > now() + 60_000) return pickerTokens.accessToken;
-      if (!tokens.refreshToken) { removeStored('pickerTokens'); throw new OneDriveAuthError('Reconnect OneDrive to choose a folder.', 'reconnect_required'); }
+      if (picker && picker.expiresAt > now() + 60_000) return picker.accessToken;
+      if (!tokens.refreshToken) throw new OneDriveAuthError('Reconnect OneDrive to choose a folder.', 'reconnect_required');
       const expected = generation;
-      let replacement: Tokens;
-      try { replacement = await fetchToken({ grant_type: 'refresh_token', refresh_token: tokens.refreshToken }, tokens.refreshToken, PICKER_SCOPES); }
-      catch (error) {
-        if (error instanceof OneDriveAuthError && error.reconnectRequired && expected === generation) removeStored('pickerTokens');
-        throw error;
-      }
+      const replacement = await fetchToken({ grant_type: 'refresh_token', refresh_token: tokens.refreshToken }, tokens.refreshToken, PICKER_SCOPES);
       assertCurrent(expected);
       saveStored('pickerTokens', replacement);
       return replacement.accessToken;
     });
   }
   function isConnected(): boolean { return readStored('tokens', isTokens) !== undefined; }
-  return { startSignIn, startAutomaticSignIn: () => startSignIn(undefined, true), startPickerSignIn: () => startSignIn('picker'), completeSignIn, getAccessToken, getPickerToken, hasPickerAuthorization, disconnect, isConnected };
+  return { startSignIn, startAutomaticSignIn: () => startSignIn(true), completeSignIn, getAccessToken, getPickerToken, disconnect, isConnected };
 }
 
 export type OneDriveAuth = ReturnType<typeof createOneDriveAuth>;

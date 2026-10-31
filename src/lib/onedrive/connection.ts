@@ -1,6 +1,5 @@
-import { DeckRequestError } from '../deck-client.js';
 import type { DeckBackend } from '../deck-backend.js';
-import { GraphError, type GraphClient, type GraphItem } from './graph.js';
+import { type GraphClient, type GraphItem } from './graph.js';
 import type { FolderMemory } from './folder-memory.js';
 import { createOneDriveStore } from './store.js';
 
@@ -31,17 +30,7 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
   }
 
   async function useDefault(): Promise<void> {
-    const root = await graph.root();
-    let folder = await graph.findChild(root.id, 'My Flashcards');
-    if (!folder) {
-      try { folder = await graph.createFolder(root.id, 'My Flashcards'); }
-      catch (failure) {
-        if (!(failure instanceof GraphError) || failure.status !== 409) throw failure;
-        folder = await graph.findChild(root.id, 'My Flashcards');
-      }
-    }
-    if (!folder?.folder) throw new DeckRequestError('My Flashcards exists but is not a folder. Choose an existing folder instead.');
-    await select(folder);
+    await select(await graph.root());
   }
 
   async function restore(): Promise<void> {

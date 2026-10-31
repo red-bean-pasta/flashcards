@@ -292,7 +292,7 @@
     <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(pickerWidth)} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
     <div class="picker-frames">
       {#each pickerSlots as slot (slot.id)}
-        <iframe bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} title="OneDrive folder picker"></iframe>
+        <iframe class="picker-frame" bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} title="OneDrive folder picker"></iframe>
       {/each}
     </div>
   </aside>
