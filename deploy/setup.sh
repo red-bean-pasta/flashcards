@@ -155,12 +155,11 @@ BeginTransaction() {
 }
 
 WriteSiteConfig() {
-  # Render the example's site block so script and documented configuration cannot drift.
+  # Render the site example so script and documented configuration cannot drift.
   python3 - "$Script_Dir/Caddyfile.example" "$Txn_Dir/site.new" "$Domain" "$Port" "${Release_Dir##*/}" <<'PY'
 import pathlib, sys
 source, dest, domain, port, marker = sys.argv[1:]
-raw = pathlib.Path(source).read_text().replace('\r\n', '\n')
-site = raw.split('# BEGIN FLASHCARDS SITE\n', 1)[1]
+site = pathlib.Path(source).read_text().replace('\r\n', '\n')
 site = site.replace('https://{$DOMAIN:localhost}:{$PORT:443} {',
                     f'https://{domain}:{port} {{\n    vars flashcards_deployment {marker}')
 pathlib.Path(dest).write_text(site)

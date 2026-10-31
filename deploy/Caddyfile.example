@@ -1,25 +1,5 @@
-# Global options block
-# Note: In Caddyfile, global options must only appear once, at the very top of the root Caddyfile.
-# If your server already has /etc/caddy/Caddyfile, keep its existing global options.
-{
-    # Global ACME DNS challenge via Cloudflare plugin (if using Cloudflare DNS token)
-    # acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-
-    # Optional: Tighten server timeouts against Slowloris when directly exposed without DDoS proxy
-    # servers {
-    #     timeouts {
-    #         read_body 10s
-    #         read_header 10s
-    #         write 30s
-    #         idle 1m
-    #     }
-    #     max_header_size 16kb
-    # }
-}
-
 # Flashcards Site Configuration
 # Replace {$DOMAIN} and {$PORT:443} with your domain and port (or use deploy/setup.sh).
-# BEGIN FLASHCARDS SITE
 https://{$DOMAIN:localhost}:{$PORT:443} {
     root * /srv/flashcards/dist
 
