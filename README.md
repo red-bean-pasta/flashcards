@@ -74,3 +74,18 @@ Press **Space** to reveal or advance, **←** to revisit, and **→** to advance
 
 > For appearance tweaks, see the variables at the top of [src/style.css](src/style.css). The file selector and shared Add/Edit panel default widths are viewport ratios; a saved file-selector width takes precedence, and panel minimums still apply.
 
+6. **Host it on your server (optional).**
+
+With Caddy installed and running, deploy from the project folder as a user with sudo access:
+
+```sh
+sudo ./deploy/setup.sh --domain flashcards.example.com
+```
+
+The script builds the app with Node.js 22.12+ and npm. For more options, run:
+
+```sh
+./deploy/setup.sh --help
+```
+
+> The deployed app is served from `/srv/flashcards/dist`. Its Caddy site configuration is stored at `/etc/caddy/conf.d/flashcards.caddy`.
