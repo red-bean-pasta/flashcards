@@ -77,20 +77,19 @@ function validItem(value: unknown): value is StoredMutation {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, 2);
+    let unsupportedVersion = false;
     request.onupgradeneeded = event => {
       const db = request.result;
-      const tx = request.transaction!;
-      const store = (event.oldVersion === 0) ? db.createObjectStore(STORE, { keyPath: 'id' }) : tx.objectStore(STORE);
-      const meta = db.createObjectStore(META);
-      const read = store.getAll();
-      read.onsuccess = () => {
-        const records = (read.result as StoredMutation[]).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-        records.forEach((item, index) => store.put({ ...item, order: index + 1 }));
-        meta.put(records.length, 'lastOrder');
-      };
+      if (event.oldVersion !== 0) {
+        unsupportedVersion = true;
+        request.transaction!.abort();
+        return;
+      }
+      db.createObjectStore(STORE, { keyPath: 'id' });
+      db.createObjectStore(META);
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(unsupportedVersion ? new Error('The pending changes database uses an unsupported older version.') : request.error);
     request.onblocked = () => reject(new Error('The pending changes database is blocked by another browser tab.'));
   });
 }

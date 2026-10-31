@@ -10,6 +10,8 @@ Domain="${DOMAIN:-${SERVER_DOMAIN:-}}"
 Port="${PORT:-${SERVER_PORT:-443}}"
 Skip_Build=false
 Txn_Dir=""
+Root_Backup=""
+Site_Backup=""
 Release_Dir=""
 Transaction_Started=false
 Committed=false
@@ -19,7 +21,6 @@ Had_Root=false
 Had_Site=false
 Old_Dist_Kind=absent
 Old_Link=""
-Legacy_Dir=""
 
 Log() { printf '%s\n' "$*" >&2; }
 Die() { Log "ERROR: $*"; exit 1; }
@@ -131,25 +132,27 @@ StageAssets() {
 BeginTransaction() {
   [[ -d "$Caddy_Dir" ]] || install -d -m 755 "$Caddy_Dir"
   [[ -d "$Caddy_Dir/conf.d" ]] || install -d -m 755 "$Caddy_Dir/conf.d"
-  Txn_Dir="$(mktemp -d "$Caddy_Dir/.flashcards-deploy.XXXXXXXX")"
+  Txn_Dir="$(mktemp -d)"
+  local timestamp
+  timestamp="$(date -u +%Y%m%dT%H%M%S%N)"
+  Root_Backup="$Caddy_Dir/Caddyfile.$timestamp.bak"
+  Site_Backup="$Caddy_Dir/conf.d/flashcards.caddy.$timestamp.bak"
+  [[ ! -e "$Root_Backup" && ! -L "$Root_Backup" && ! -e "$Site_Backup" && ! -L "$Site_Backup" ]] || Die 'Configuration backup already exists.'
   if [[ -e "$Caddy_Dir/Caddyfile" ]]; then
     [[ -f "$Caddy_Dir/Caddyfile" ]] || Die 'Caddyfile must be a regular file.'
-    cp -p "$Caddy_Dir/Caddyfile" "$Txn_Dir/Caddyfile"
+    cp -p "$Caddy_Dir/Caddyfile" "$Root_Backup"
     Had_Root=true
   fi
   if [[ -e "$Caddy_Dir/conf.d/flashcards.caddy" ]]; then
     [[ -f "$Caddy_Dir/conf.d/flashcards.caddy" ]] || Die 'Site configuration must be a regular file.'
-    cp -p "$Caddy_Dir/conf.d/flashcards.caddy" "$Txn_Dir/flashcards.caddy"
+    cp -p "$Caddy_Dir/conf.d/flashcards.caddy" "$Site_Backup"
     Had_Site=true
   fi
   if [[ -L "$Deploy_Dir/dist" ]]; then
     Old_Dist_Kind=symlink
     Old_Link="$(readlink "$Deploy_Dir/dist")"
-  elif [[ -d "$Deploy_Dir/dist" ]]; then
-    Old_Dist_Kind=directory
-    Legacy_Dir="$Deploy_Dir/releases/legacy.${Release_Dir##*/}"
   elif [[ -e "$Deploy_Dir/dist" ]]; then
-    Die 'Existing dist must be a directory or symlink.'
+    Die 'Existing /srv/flashcards/dist must be a symlink or absent; move it aside before deploying.'
   fi
   Transaction_Started=true
 }
@@ -210,9 +213,6 @@ ConfigureCaddy() {
 
 ActivateAssets() {
   Assets_Changed=true
-  if [[ "$Old_Dist_Kind" == directory ]]; then
-    mv "$Deploy_Dir/dist" "$Legacy_Dir"
-  fi
   ln -s "$Release_Dir" "$Deploy_Dir/.dist.next.${Release_Dir##*/}"
   mv -Tf "$Deploy_Dir/.dist.next.${Release_Dir##*/}" "$Deploy_Dir/dist"
 }
@@ -228,12 +228,12 @@ ReloadCaddy() {
 RestoreConfig() {
   local result=0
   if "$Had_Root"; then
-    cp -p "$Txn_Dir/Caddyfile" "$Caddy_Dir/Caddyfile" || result=1
+    cp -p "$Root_Backup" "$Caddy_Dir/Caddyfile" || result=1
   else
     rm -f "$Caddy_Dir/Caddyfile" || result=1
   fi
   if "$Had_Site"; then
-    cp -p "$Txn_Dir/flashcards.caddy" "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
+    cp -p "$Site_Backup" "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
   else
     rm -f "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
   fi
@@ -246,11 +246,6 @@ RestoreAssets() {
     symlink)
       ln -s "$Old_Link" "$Deploy_Dir/.dist.restore.${Release_Dir##*/}" || return 1
       mv -Tf "$Deploy_Dir/.dist.restore.${Release_Dir##*/}" "$Deploy_Dir/dist" || return 1 ;;
-    directory)
-      if [[ -d "$Legacy_Dir" ]]; then
-        if [[ -L "$Deploy_Dir/dist" ]]; then rm "$Deploy_Dir/dist" || return 1; fi
-        mv "$Legacy_Dir" "$Deploy_Dir/dist" || return 1
-      fi ;;
     absent) rm -f "$Deploy_Dir/dist" || return 1 ;;
   esac
 }
@@ -270,7 +265,7 @@ Finish() {
       if "$rollback_ok"; then
         Log 'Previous deployment restored.'
       else
-        Log "ERROR: Rollback failed; recover using backups in $Txn_Dir."
+        Log "ERROR: Rollback failed; recover using $Root_Backup and $Site_Backup if present."
       fi
     fi
     # Retain a release if rollback failed, so any active symlink remains valid.
@@ -278,7 +273,8 @@ Finish() {
     (( status != 0 )) || status=1
   fi
   if [[ -n "$Txn_Dir" ]]; then
-    rm -f "$Txn_Dir/adapt.json" "$Txn_Dir/adapt.err" "$Txn_Dir/site.new" "$Caddy_Dir/conf.d/.flashcards.new"
+    rm -rf -- "$Txn_Dir"
+    rm -f "$Caddy_Dir/conf.d/.flashcards.new"
   fi
   rm -f "$Deploy_Dir/.dist.next.${Release_Dir##*/}" "$Deploy_Dir/.dist.restore.${Release_Dir##*/}"
   exit "$status"
@@ -300,7 +296,7 @@ Main() {
   ReloadCaddy
   Committed=true
   Log "Deployment complete: https://${Domain}:${Port}"
-  Log "Configuration backups: $Txn_Dir (previous asset releases retained)."
+  Log 'Previous asset releases and existing Caddy configuration backups are retained.'
 }
 
 Main "$@"
