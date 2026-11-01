@@ -97,6 +97,7 @@
   }
   function alignStorageStatus(footer: HTMLElement) {
     const shell = footer.closest<HTMLElement>('.shell')!;
+    const practicePage = footer.closest<HTMLElement>('.practice-page')!;
     const actions = footer.querySelector<HTMLElement>('.card-actions')!;
     const collection = footer.querySelector<HTMLElement>('.collection')!;
     const scroll = footer.closest<HTMLElement>('.practice-scroll')!;
@@ -109,6 +110,8 @@
       shell.classList.toggle('status-align-left', actions.getBoundingClientRect().bottom <= collection.getBoundingClientRect().top);
     }
     const observer = new ResizeObserver(update);
+    // Content can move the footer without changing the footer's own size.
+    observer.observe(practicePage);
     observer.observe(footer);
     observer.observe(actions);
     observer.observe(collection);
