@@ -25,7 +25,7 @@
   let actionError = $state('');
   const previewParams = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
   const previewError = previewParams?.get('preview') === 'error'
-    ? previewParams.get('error_message') ?? previewParams.get('error_messsage') ?? 'Could not connect to OneDrive. Please check your connection and try again.'
+    ? previewParams.get('error_message') ?? 'Could not connect to OneDrive. Please check your connection and try again.'
     : null;
   const displayedError = $derived(previewError ?? actionError);
   let redirecting = false;

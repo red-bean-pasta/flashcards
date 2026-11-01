@@ -138,14 +138,12 @@ test('parallel streams share the aggregate download budget', async () => {
   assert.ok(consumed <= 52, `Unexpected excess streaming: ${consumed} MiB`);
 });
 
-test('archive retains its separate allowance above the ordinary 5 MiB per-file limit', async () => {
+test('archive obeys the same per-file limit as other Markdown files', async () => {
   const f = fixture(1);
   f.files[0].name = 'removed.md';
   f.contents.set('f0', 'x'.repeat(5 * 1024 * 1024 + 1));
-  assert.equal((await f.store.load()).cards.length, 0);
-  await f.store.load();
-  assert.equal(f.counts.download, 1);
-  assert.equal(f.snapshots.get('removed.md')?.text.length, 5 * 1024 * 1024 + 1);
+  await assert.rejects(f.store.load(), /download limit/);
+  assert.equal(f.snapshots.has('removed.md'), false);
 });
 
 test('independent sibling defects remain visible after the first worker failure', async () => {

@@ -13,17 +13,13 @@ async function readSnapshot(graph: GraphClient, cache: SnapshotCache, source: st
   const cached = await cache.get(source);
   signal.throwIfAborted();
   const hit = cached != null && cached.id === item.id && item.eTag !== undefined && cached.revision === item.eTag;
-  // The archive historically has a separate 50 MiB allowance (readText's default).
-  const archive = source === archiveFilename;
-  const snapshot = hit ? cached : await graph.readText(item.id, signal, archive ? undefined : budget.remainingBytes(), {
-    metadata: item, onBytes: archive ? undefined : budget.transfer,
+  const snapshot = hit ? cached : await graph.readText(item.id, signal, budget.remainingBytes(), {
+    metadata: item, onBytes: budget.transfer,
   });
   signal.throwIfAborted();
-  if (!archive) {
-    const bytes = new TextEncoder().encode(snapshot.text).byteLength;
-    if (hit) budget.transfer(bytes);
-    budget.file(source, bytes);
-  }
+  const bytes = new TextEncoder().encode(snapshot.text).byteLength;
+  if (hit) budget.transfer(bytes);
+  budget.file(source, bytes);
   if (!hit) await cache.put(source, snapshot);
   signal.throwIfAborted();
   return { source, snapshot, hit };
