@@ -1,5 +1,7 @@
 # Flashcards
 
+**Try it online:** https://flashcards.redbeanpasta.de
+
 A flashcard app for you to rehearse your study notes interactively. You can use it with any question-and-answer material.
 
 Flashcards reads your notes organized as question-and-answer pairs in Markdown and runs a local web app for you to practice. It shuffles the pairs so you can test your recall. There’s no manual import, account to create, or database to maintain.
@@ -11,8 +13,6 @@ This prototype has no spaced repetition or saved study progress.
 ![Add](docs/images/add.png)
 ![File Picker](docs/images/file_picker.png)
 ![History](docs/images/history.png)
-
-**Try it online:** https://flashcards.redbeanpasta.de
 
 ## Quick start
 
