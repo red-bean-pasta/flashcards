@@ -9,11 +9,12 @@ function setup() {
   let form: any;
   const sent: any[] = [];
   const source = {};
-  const frame = { name: '', contentWindow: source } as HTMLIFrameElement;
+  const frame = { contentWindow: source } as HTMLIFrameElement;
   const port = { addEventListener: (_: string, fn: typeof command) => { command = fn; }, start() {}, close() {}, postMessage: (value: unknown) => sent.push(value) };
   const fakeDocument = { createElement: (tag: string) => tag === 'form' ? (form = { append() {}, submit() {}, remove() {} }) : {}, body: { append() {} } };
   const fakeWindow = { addEventListener: (_: string, fn: typeof initialize) => { initialize = fn; }, removeEventListener() {} };
-  Object.assign(globalThis, { window: fakeWindow, document: fakeDocument, location: { origin: 'http://localhost:3000' } });
+  Object.assign(frame, { contentDocument: fakeDocument });
+  Object.assign(globalThis, { window: fakeWindow, document: { createElement() { throw new Error('Picker must not create a host-page form.'); } }, location: { origin: 'http://localhost:3000' } });
   return { frame, source, port, sent, getForm: () => form, initialize: (event: any) => initialize(event), command: (data: any) => command({ data } as MessageEvent), restore: () => Object.assign(globalThis, original) };
 }
 
@@ -30,7 +31,7 @@ test('persistent picker validates initialization and handles repeated selections
     const url = new URL(form.action);
     assert.equal(url.origin + url.pathname, 'https://onedrive.live.com/picker');
     assert.equal(form.method, 'POST');
-    assert.equal(form.target, env.frame.name);
+    assert.equal(form.target, '_self');
     const options = JSON.parse(url.searchParams.get('filePicker')!);
     assert.deepEqual(options.entry.oneDrive.files, { folder: 'Apps/Flashcards', fallbackToRoot: true });
     assert.equal(options.accessibility.trapFocusOnLoad, false);

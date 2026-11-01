@@ -17,11 +17,14 @@ function pickerOptions(channelId: string) {
 function submitPicker(frame: HTMLIFrameElement, channelId: string, token: string) {
   const url = new URL('/picker', PICKER_ORIGIN);
   url.searchParams.set('filePicker', JSON.stringify(pickerOptions(channelId)));
-  const form = document.createElement('form');
-  form.method = 'POST'; form.action = url.href; form.target = frame.name;
-  const input = document.createElement('input');
+  const frameDocument = frame.contentDocument;
+  if (!frameDocument?.body) throw new Error('OneDrive picker requires a mounted, same-origin frame.');
+  // Submit within the frame so navigation cannot resolve to a separate tab.
+  const form = frameDocument.createElement('form');
+  form.method = 'POST'; form.action = url.href; form.target = '_self';
+  const input = frameDocument.createElement('input');
   input.type = 'hidden'; input.name = 'access_token'; input.value = token;
-  form.append(input); document.body.append(form);
+  form.append(input); frameDocument.body.append(form);
   try { form.submit(); } finally { form.remove(); }
 }
 
@@ -45,7 +48,6 @@ export interface PickerCallbacks {
 
 export function createOneDrivePicker(frame: HTMLIFrameElement, { getToken, select, onClose, onError, onSelected, onReady }: PickerCallbacks) {
   const channelId = crypto.randomUUID();
-  frame.name = `onedrive-picker-${channelId}`;
   let port: MessagePort | undefined;
   let disposed = false;
   let selecting = false;
