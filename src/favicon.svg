@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-27.3 71.5 331.8 331.8">
+  <defs>
+    <linearGradient id="overlapEmission" gradientUnits="userSpaceOnUse"
+                    x1="67.5" y1="284.5" x2="209.7" y2="190.3">
+      <stop stop-color="#526B4B"/>
+      <stop offset=".5" stop-color="#6C8063"/>
+      <stop offset="1" stop-color="#85977B"/>
+    </linearGradient>
+    <clipPath id="overlap">
+      <rect x="91.5" y="166.3" width="94.2" height="142.2"/>
+    </clipPath>
+  </defs>
+  <!-- Bottom-left green rectangle, offset 40% left and down. -->
+  <rect x="28.7" y="166.3" width="157" height="237" fill="#526B4B"/>
+  <!-- Top-right rectangle in the existing jade green. -->
+  <rect x="91.5" y="71.5" width="157" height="237" fill="#85977B"/>
+  <!-- The shared rectangle blends across its top-left to bottom-right diagonal. -->
+  <rect x="91.5" y="166.3" width="94.2" height="142.2"
+        fill="url(#overlapEmission)" clip-path="url(#overlap)"/>
+</svg>
