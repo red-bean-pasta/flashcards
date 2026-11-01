@@ -12,10 +12,23 @@ import type { StoredMutation, MutationWritePlan } from '../mutation-storage.js';
 import { validateMutationPlan } from '../mutation-plan.js';
 import { createSnapshotCache, type SnapshotCache, type FileSnapshot } from './snapshot-cache.js';
 
-export function asDeckError(error: unknown): never {
-  if (error instanceof GraphError || error instanceof OneDriveAuthError || error instanceof CardParseError || error instanceof CardInputError) {
-    throw new DeckRequestError(error.message, { cause: error });
+/** Only aggregates made entirely of expected external failures are recoverable. */
+function externalFailureMessages(error: unknown): string[] | undefined {
+  if (error instanceof GraphError || error instanceof OneDriveAuthError || error instanceof CardParseError || error instanceof CardInputError || error instanceof DeckRequestError) return [error.message];
+  if (!(error instanceof AggregateError) || !error.errors.length) return undefined;
+  const messages: string[] = [];
+  for (const failure of error.errors) {
+    const nested = externalFailureMessages(failure);
+    if (!nested) return undefined;
+    messages.push(...nested);
   }
+  return messages;
+}
+
+export function asDeckError(error: unknown): never {
+  if (error instanceof DeckRequestError) throw error;
+  const messages = externalFailureMessages(error);
+  if (messages) throw new DeckRequestError([...new Set(messages)].join('; '), { cause: error });
   throw error;
 }
 
@@ -61,6 +74,10 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     return snapshot;
   }
 
+  // Intentional optimistic first-write policy: plan from cached text/eTag instead
+  // of rereading content in the usual no-race case. publish uses If-Match (or
+  // no-clobber creation); a definite 409/412 causes refresh and replanning.
+  // Path-membership checks still apply; uncertain writes must not be blindly replayed.
   async function sourcePlan(operation: CardOperation, snapshot: DeckState, refresh = false): Promise<{ plan: MutationWritePlan; removed: string }> {
     let before = refresh ? await refreshSnapshot(operation.source) : await cache.get(operation.source);
     if (before === undefined) {
@@ -73,6 +90,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     return { plan: { id: before?.id ?? null, name: operation.source, before: before?.text ?? null, revision: before?.revision ?? null, after: change.text }, removed: change.removed };
   }
 
+  // Archive writes use the same cached-first, conditional-write policy as sources.
   async function archivePlan(removed: string, refresh = false): Promise<MutationWritePlan> {
     const cached = refresh ? await refreshSnapshot(archiveFilename) : await cache.get(archiveFilename);
     const before = cached === undefined ? await refreshSnapshot(archiveFilename) : cached;

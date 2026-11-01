@@ -15,7 +15,7 @@ function fixture(count = 28) {
   const snapshots = new Map<string, FileSnapshot | null>();
   const contents = new Map<string, string>();
   const counts = { listing: 0, metadata: 0, download: 0, active: 0, peak: 0 };
-  const graph = createGraphClient(async () => 'token', async input => {
+  const graph = createGraphClient(async () => 'token', async (input, init) => {
     const url = new URL(String(input));
     counts.active++;
     counts.peak = Math.max(counts.peak, counts.active);
@@ -23,8 +23,18 @@ function fixture(count = 28) {
       await pause();
       if (url.pathname.endsWith('/children')) {
         counts.listing++;
-        assert.match(url.search, /\$select=.*downloadUrl/);
-        return Response.json({ value: files });
+        // Model the observed Personal API: projection removes download URLs.
+        const items = url.searchParams.has('$select')
+          ? files.map(item => ({ ...item, '@microsoft.graph.downloadUrl': undefined }))
+          : files;
+        return Response.json({ value: items });
+      }
+      if (url.pathname.endsWith('/$batch')) {
+        const request = JSON.parse(String(init?.body));
+        counts.metadata += request.requests.length;
+        return Response.json({ responses: request.requests.map((part: any) => ({
+          id: part.id, status: 200, body: files.find(file => part.url.endsWith('/' + file.id)),
+        })).reverse() });
       }
       const file = files.find(item => item.id === url.pathname.split('/').at(-1));
       assert.ok(file);
@@ -52,7 +62,7 @@ test('28-file load overlaps requests, reuses metadata, and refresh downloads onl
   assert.equal(f.counts.listing, 1);
   assert.equal(f.counts.metadata, 28);
   assert.equal(f.counts.download, 28);
-  assert.equal(f.counts.peak, 6);
+  assert.equal(f.counts.peak, 10);
   assert.equal((await f.store.load()).cards.length, 28);
   assert.equal(f.counts.listing, 2);
   assert.equal(f.counts.metadata, 28);
@@ -122,7 +132,7 @@ test('parallel streams share the aggregate download budget', async () => {
   const budget = createLoadBudget();
   const chunk = new Uint8Array(1024 * 1024);
   let consumed = 0;
-  const graph = createGraphClient(async () => 'token', async input => {
+  const graph = createGraphClient(async () => 'token', async (input, init) => {
     const url = new URL(String(input));
     if (url.hostname !== 'download.example') return Response.json({ id: 'f', name: 'f.md', file: {}, eTag: 'v1', '@microsoft.graph.downloadUrl': 'https://download.example/f' });
     return new Response(new ReadableStream({
@@ -154,4 +164,18 @@ test('independent sibling defects remain visible after the first worker failure'
     await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     throw second;
   }), error => error instanceof AggregateError && error.errors[0] === first && error.errors[1] === second);
+});
+
+test('a revision race during batch verification rereads the changed file before caching', async () => {
+  const f = fixture(2);
+  const getItems = f.graph.getItems;
+  let raced = false;
+  f.graph.getItems = async (ids, signal) => {
+    if (!raced) { f.files[0].eTag = 'v2'; raced = true; }
+    return getItems(ids, signal);
+  };
+  const deck = await f.store.load();
+  assert.equal(deck.cards[0].question, 'f0:v2');
+  assert.equal(f.snapshots.get('0.md')?.revision, 'v2');
+  assert.equal(f.counts.download, 3);
 });

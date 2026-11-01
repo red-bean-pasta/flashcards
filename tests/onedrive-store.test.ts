@@ -4,7 +4,7 @@ import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { DeckRequestError } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
 import type { GraphClient, GraphItem } from '../src/lib/onedrive/graph.ts';
-import { createOneDriveStore } from '../src/lib/onedrive/store.ts';
+import { createOneDriveStore, asDeckError } from '../src/lib/onedrive/store.ts';
 import { captureOperation } from '../src/lib/onedrive/operations.ts';
 import type { StoredMutation } from '../src/lib/mutation-storage.ts';
 
@@ -47,6 +47,8 @@ function fixture() {
       if (child(parent, name)) throw new GraphError('Name collision', { status: 409, code: 'nameAlreadyExists' });
       return put(parent, name, '', true);
     },
+    getItems: async ids => ids.map(id => copy(requireNode(id).item)),
+    download: async item => { reads.push(item.id); return requireNode(item.id).text; },
     readText: async id => { reads.push(id); const node = requireNode(id); return { id, text: node.text, revision: node.item.eTag! }; },
     createFile: async (parent, name, text) => {
       const write: Write = { kind: 'create', id: '', parent, name, text };
@@ -480,4 +482,13 @@ test('repeated archive conflicts retain a retryable removal', async () => {
   await store.execute(item, async () => {});
   assert.equal(f.text('root', 'deck.md'), '');
   assert.equal(f.text('root', 'removed.md'), entry('Other') + entry('Old'));
+});
+
+
+test('parallel external failures are presentable without concealing mixed internal defects', () => {
+  const external = new GraphError('Rate limited; retry after 17 seconds.', {status:429, code:'throttled'});
+  const group = new AggregateError([external, external], 'Workers failed');
+  assert.throws(() => asDeckError(group), error => error instanceof DeckRequestError && error.cause === group && /17 seconds/.test(error.message));
+  const mixed = new AggregateError([external, new TypeError('Internal defect')], 'Workers failed');
+  assert.throws(() => asDeckError(mixed), error => error === mixed);
 });

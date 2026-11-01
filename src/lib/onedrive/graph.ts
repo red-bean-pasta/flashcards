@@ -1,3 +1,4 @@
+import { BatchResponseError, parseBatchReplies, readMetadataBatches } from './metadata-batch.js';
 /** OneDrive Personal transport. Requests are intentionally never retried after a write. */
 export interface GraphItem {
   id: string;
@@ -173,9 +174,22 @@ async function downloadText(response: Response, maxBytes: number, onBytes?: (byt
   } finally { reader.releaseLock(); }
 }
 
+async function checkedMetadataItems(replies: ReturnType<typeof parseBatchReplies>, ids: string[]): Promise<GraphItem[]> {
+  const items: GraphItem[] = [];
+  for (const [index, reply] of replies.entries()) {
+    if (reply.status > 200 && reply.status < 400) throw invalidResponse(false);
+    if (reply.status !== 200) throw await httpError(new Response(JSON.stringify(reply.body), { status: reply.status, headers: reply.headers }), false);
+    const item = requireFile(parseItem(reply.body));
+    if (item.id !== ids[index]) throw invalidResponse(false);
+    items.push(item);
+  }
+  return items;
+}
+
 export function createGraphClient(getAccessToken: () => Promise<string>, fetcher: typeof fetch = fetch) {
-  async function request(url: string, init: RequestInit = {}, authenticated = true): Promise<Response> {
-    const write = init.method === 'PUT' || init.method === 'POST';
+  async function request(url: string, init: RequestInit = {}, options: { authenticated?: boolean; readOnly?: boolean } = {}): Promise<Response> {
+    const authenticated = options.authenticated ?? true;
+    const write = !options.readOnly && (init.method === 'PUT' || init.method === 'POST');
     const headers = new Headers(init.headers);
     // Validate before obtaining the bearer token or dispatching any request.
     if (authenticated) {
@@ -205,7 +219,9 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
   }
 
   async function children(id: string, signal?: AbortSignal, maxItems = 2000): Promise<GraphItem[]> {
-    let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children?$select=id,name,eTag,file,folder,parentReference,@microsoft.graph.downloadUrl&$top=200`;
+    // OneDrive Personal omits download URLs when fields are projected, even if
+    // the annotation is selected. Default metadata lets reads reuse the listing.
+    let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children?$top=200`;
     const items: GraphItem[] = [];
     const visited = new Set<string>();
     while (next) {
@@ -229,6 +245,27 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return items;
   }
 
+  async function download(item: GraphItem, signal?: AbortSignal, maxBytes = 50 * 1024 * 1024, onBytes?: (bytes: number) => void): Promise<string> {
+    requireFile(item);
+    return downloadText(await request(downloadUrl(item.downloadUrl), { signal }, { authenticated: false }), maxBytes, onBytes);
+  }
+
+  async function readMetadataGroup(ids: string[], signal: AbortSignal): Promise<GraphItem[]> {
+    const keys = ids.map((_, index) => String(index));
+    // POST is an envelope for GETs, not a write with an uncertain mutation outcome.
+    const response = await request(`${BASE}/$batch`, {
+      method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests: ids.map((id, index) => ({ id: keys[index], method: 'GET', url: `/me/drive/items/${segment(id)}` })) }),
+    }, { readOnly: true });
+    let replies;
+    try { replies = parseBatchReplies(JSON.parse(await downloadText(response, 5 * 1024 * 1024)), keys); }
+    catch (error) {
+      if (!(error instanceof SyntaxError || error instanceof BatchResponseError)) throw error;
+      throw invalidResponse(false, error);
+    }
+    return checkedMetadataItems(replies, ids);
+  }
+
   async function readText(id: string, signal?: AbortSignal, maxBytes = 50 * 1024 * 1024, options: { metadata?: GraphItem; onBytes?: (bytes: number) => void } = {}): Promise<{ id: string; text: string; revision: string }> {
     const listed = options.metadata;
     if (listed && listed.id !== id) throw new TypeError('Read metadata belongs to a different file.');
@@ -237,8 +274,7 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     // property, obtain fresh metadata rather than guessing a download address.
     if (listed && !before.downloadUrl) before = requireFile(await getItem(id, signal));
     for (let attempt = 0; attempt < 3; attempt++) {
-      const response = await request(downloadUrl(before.downloadUrl), { signal }, false);
-      const text = await downloadText(response, maxBytes, options.onBytes);
+      const text = await download(before, signal, maxBytes, options.onBytes);
       const after = requireFile(await getItem(id, signal));
       if (before.eTag === after.eTag) return { id, text, revision: after.eTag };
       before = after;
@@ -264,6 +300,8 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     },
     root,
     getItem,
+    getItems: (ids: string[], signal?: AbortSignal) => readMetadataBatches(ids, readMetadataGroup, signal),
+    download,
     children,
     async findChild(parentId: string, name: string): Promise<GraphItem | null> {
       const matches = (await children(parentId)).filter(item => item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
