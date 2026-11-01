@@ -2,11 +2,11 @@
 
 **Try it online:** https://flashcards.redbeanpasta.de
 
+> PWA is supported.
+
 A flashcard app for you to rehearse your study notes interactively. You can use it with any question-and-answer material.
 
 Flashcards reads your notes organized as question-and-answer pairs in Markdown and runs a local web app for you to practice. It shuffles the pairs so you can test your recall. There’s no manual import, account to create, or database to maintain.
-
-You can install the hosted app from a supported browser. After the first visit, the app shell is available offline; OneDrive access still requires a connection, and local-folder access depends on browser support and permissions.
 
 This prototype has no spaced repetition or saved study progress.
 

@@ -466,7 +466,3 @@ dialog.remove-banner.picker-open { left: var(--picker-visible-width); width: cal
 @media (aspect-ratio < 5/6) { .shell.card-panel-open .storage-connection { right: var(--add-panel-width); } }
 .shell.card-panel-open dialog.remove-banner { right: var(--add-panel-width); width: calc(100% - var(--add-panel-width)); }
 .shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - var(--picker-visible-width)); }
-
-.history-preview { position: fixed; z-index: 100; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; background: #f5f4ef; }
-.history-preview .preview-success::before { background: color-mix(in srgb, var(--history-success-color), transparent var(--history-background-transparency)); }
-.history-preview .preview-failure::before { background: color-mix(in srgb, var(--history-failure-color), transparent var(--history-background-transparency)); }
