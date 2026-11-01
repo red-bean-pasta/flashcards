@@ -3,8 +3,8 @@
   import type { HistoryEntry } from '../lib/history';
   import { panelTransition } from '../lib/panel-transition';
 
-  let { history, problem = '', addWidth, onResizeAdd, onAddResizing, onClose, onDismiss, onReview }: {
-    history: HistoryEntry[]; addWidth: number; onResizeAdd: (x: number) => void;
+  let { history, problem = '', addWidth, panelBounds, viewportWidth, onResizeAdd, onAddResizing, onClose, onDismiss, onReview }: {
+    history: HistoryEntry[]; addWidth: number; panelBounds: { min: number; max: number } | null; viewportWidth: number; onResizeAdd: (x: number) => void;
     problem?: string; onAddResizing: (value: boolean) => void; onClose: () => void; onDismiss: (id: string) => void; onReview: (id: string) => void;
   } = $props();
   let panel: HTMLElement;
@@ -24,7 +24,7 @@
 <svelte:window onpointerdown={event => { const target = event.target; if (target instanceof Node && !panel.contains(target) && !(target instanceof Element && target.closest('button'))) onClose(); }} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) onClose(); }} />
 <aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="history-title">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: Keyboard-accessible window splitter. -->
-  <div class="add-panel-resize" role="separator" tabindex="0" aria-label="Resize history panel" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(addWidth)}
+  <div class="add-panel-resize" role="separator" tabindex="0" aria-label="Resize history panel" aria-orientation="vertical" aria-valuemin={panelBounds ? Math.round(panelBounds.min / viewportWidth * 100) : 0} aria-valuemax={panelBounds ? Math.round(panelBounds.max / viewportWidth * 100) : 0} aria-valuenow={Math.round(addWidth)}
     onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(event.clientX); } }}
     onpointermove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) onResizeAdd(event.clientX); }}
     onlostpointercapture={() => onAddResizing(false)}

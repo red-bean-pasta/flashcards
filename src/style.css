@@ -1,6 +1,7 @@
 :root {
   --file-selector-default-width-ratio: 0.333333; /* Fraction of viewport width; saved resizing takes precedence. */
   --card-panel-default-width-ratio: 0.333333; /* Shared by Add and Edit; fraction of viewport width. */
+  --slide-over-default-width-ratio: 0.666667; /* Fraction of viewport width for all slide-over panels. */
   --action-width-ratio: 1.8;      /* Green button width / rendered label width. */
   --action-min-width: 80px;       /* Minimum width for short action labels. */
   --action-max-margin: 24px;      /* Maximum space on each side of a label. */
@@ -66,16 +67,17 @@ a { color: inherit; }
 .shell.picker-open::before { box-shadow: -2px 0 18px #0003; }
 .practice-scroll, .shell > .remaining-line { position: relative; z-index: 2; }
 .storage-connection { position: absolute; z-index: 3; top: 0; left: 0; right: 0; padding: 1rem 1.5rem; background: var(--dialog-color); font-size: .78rem; max-height: 40vh; overflow: auto; }
+.shell > .remaining-line { z-index: 4; }
 .storage-stack { display: inline-grid; max-width: 100%; }
 .storage-stack > .storage-actions { grid-area: 1 / 1; }
 .storage-switch button.text-action { text-decoration: underline; }
 .storage-actions { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
-.shell { --picker-visible-width: min(100vw, 40vh); }
-.shell.picker-open { margin-left: var(--picker-visible-width); }
+.shell { --picker-visible-width: var(--picker-width); }
 @media (min-aspect-ratio: 5/6) {
-  .shell { --picker-visible-width: clamp(40vh, var(--picker-width), 75vw); }
+  .shell.picker-open { margin-left: var(--picker-visible-width); }
   .shell.card-panel-open { margin-right: var(--add-panel-width); }
 }
+@media (aspect-ratio < 5/6) { .shell.picker-open::before { box-shadow: none; } }
 .shell.picker-resizing { transition: none; }
 @media (prefers-reduced-motion: reduce) { .shell, .shell::before { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
@@ -416,10 +418,7 @@ dialog.remove-banner {
   box-shadow: 0 5px 20px rgb(0 0 0 / .18);
 }
 dialog.remove-banner::backdrop { background: transparent; }
-dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - min(100vw, 40vh)); }
-@media (min-aspect-ratio: 5/6) {
-  dialog.remove-banner.picker-open { left: clamp(40vh, var(--picker-width), 75vw); width: calc(100% - clamp(40vh, var(--picker-width), 75vw)); }
-}
+dialog.remove-banner.picker-open { left: var(--picker-visible-width); width: calc(100% - var(--picker-visible-width)); }
 .remove-banner form { display: flex; align-items: center; gap: 24px; }
 .remove-banner .dialog-actions { flex: 0 0 auto; margin: 0 0 0 auto; }
 .remove-confirmation { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
@@ -437,7 +436,6 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 .add-panel-content .dialog-actions { margin-top: 24px; }
 .add-panel-resize { position: absolute; z-index: 2; top: 0; left: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
 .add-panel-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
-@media (aspect-ratio < 5/6) { .add-panel-resize { display: none; } }
 
 .history-button { position: relative; isolation: isolate; }
 .history-button::before { content: ''; position: absolute; z-index: -1; inset: 0 -8px; border-radius: 6px; background: transparent; }
@@ -467,10 +465,7 @@ dialog.remove-banner.picker-open { left: min(100vw, 40vh); width: calc(100% - mi
 /* Keep banners within the area left of an open side panel. */
 @media (aspect-ratio < 5/6) { .shell.card-panel-open .storage-connection { right: var(--add-panel-width); } }
 .shell.card-panel-open dialog.remove-banner { right: var(--add-panel-width); width: calc(100% - var(--add-panel-width)); }
-.shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - min(100vw, 40vh)); }
-@media (min-aspect-ratio: 5/6) {
-  .shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - clamp(40vh, var(--picker-width), 75vw)); }
-}
+.shell.card-panel-open dialog.remove-banner.picker-open { width: calc(100% - var(--add-panel-width) - var(--picker-visible-width)); }
 
 .history-preview { position: fixed; z-index: 100; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; background: #f5f4ef; }
 .history-preview .preview-success::before { background: color-mix(in srgb, var(--history-success-color), transparent var(--history-background-transparency)); }

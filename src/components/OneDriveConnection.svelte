@@ -8,10 +8,11 @@
   import { createFolderMemory } from '../lib/onedrive/folder-memory';
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
+  import { clampPanelWidth, panelWidthBounds } from '../lib/panel-width';
 
-  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, active = 'local', canSwitch = true }: {
+  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, viewportWidth, viewportHeight, active = 'local', canSwitch = true }: {
     onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
-    pickerWidth: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
+    pickerWidth: number; viewportWidth: number; viewportHeight: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
     active?: 'local' | 'onedrive'; canSwitch?: boolean;
   } = $props();
   const clientId = import.meta.env.VITE_ONEDRIVE_CLIENT_ID as string | undefined;
@@ -30,6 +31,7 @@
   const displayedError = $derived(previewError ?? actionError);
   let redirecting = false;
   let pickerOpen = $state(false);
+  const pickerBounds = $derived(viewportWidth > 0 && viewportHeight > 0 ? panelWidthBounds({ width: viewportWidth, height: viewportHeight }) : null);
   type PickerSlot = { id: number; frame?: HTMLIFrameElement };
   let pickerSlots = $state<PickerSlot[]>([]);
   let activePickerId = $state<number | null>(null);
@@ -160,8 +162,7 @@
   }
 
   function resizePicker(clientX: number) {
-    const minimum = window.innerHeight * 0.4 / window.innerWidth * 100;
-    onPickerWidth(Math.min(75, Math.max(minimum, clientX / window.innerWidth * 100)));
+    onPickerWidth(clampPanelWidth(clientX, { width: viewportWidth, height: viewportHeight }));
   }
 
   function startResize(event: PointerEvent) {
@@ -179,7 +180,8 @@
   function resizeWithKeyboard(event: KeyboardEvent) {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    resizePicker((pickerWidth + (event.key === 'ArrowRight' ? 2 : -2)) / 100 * window.innerWidth);
+    const width = (event.currentTarget as HTMLElement).parentElement!.getBoundingClientRect().width;
+    resizePicker(width + (event.key === 'ArrowRight' ? 2 : -2) / 100 * window.innerWidth);
   }
 
   export function closePicker(restoreFocus = true) {
@@ -285,16 +287,19 @@
   .error-action { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; }
   :global(.status-align-left) .onedrive-status.has-status { left: var(--status-left); right: auto; text-align: left; }
 
-  .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: clamp(40vh, var(--picker-width), 75vw); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
+  .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: var(--picker-width); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
   .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }
   .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
   .picker-header-actions { display: flex; gap: 1rem; }
   .picker-frames { position: relative; flex: 1; min-height: 0; }
   .picker-pane iframe { position: absolute; inset: 0; border: 0; width: 100%; height: 100%; }
   .picker-pane iframe.pending { opacity: 0; pointer-events: none; }
-  .picker-resize { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+  .picker-resize { position: absolute; z-index: 1; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
   .picker-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
-  @media (aspect-ratio < 5/6) { .picker-pane { width: min(100vw, 40vh); } .picker-resize { display: none; } }
+  @media (aspect-ratio < 5/6) {
+    .picker-pane { z-index: 10; box-shadow: 2px 0 18px #0003; transform: translateX(0); transition: transform 300ms ease, visibility 0s; }
+    .picker-hidden { transform: translateX(-100%); transition: transform 300ms ease, visibility 0s 300ms; }
+  }
   @media (prefers-reduced-motion: reduce) { .picker-pane { transition: none; } }
 </style>
 
@@ -303,7 +308,7 @@
   <aside class="picker-pane" class:picker-hidden={!pickerOpen} inert={!pickerOpen} aria-hidden={!pickerOpen} aria-label="Choose a OneDrive folder">
     <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy || pickerStarting} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={() => closePicker()} aria-label="Close folder picker">Close</button></div></div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: A focusable separator is the accessible window-splitter pattern. -->
-    <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="75" aria-valuenow={Math.round(pickerWidth)} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
+    <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin={pickerBounds ? Math.round(pickerBounds.min) : 0} aria-valuemax={pickerBounds ? Math.round(pickerBounds.max) : 0} aria-valuenow={Math.round(pickerWidth)} aria-valuetext={`${Math.round(pickerWidth)} pixels`} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
     <div class="picker-frames">
       {#each pickerSlots as slot (slot.id)}
         <iframe class="picker-frame" bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} title="OneDrive folder picker"></iframe>

@@ -22,6 +22,7 @@
   import { captureOperation } from './lib/onedrive/operations';
   import { projectRecoveredMutation } from './lib/mutation-projection';
   import { projectPendingMutations } from './lib/pending-projection';
+  import { clampPanelWidth, panelWidthBounds } from './lib/panel-width';
 
   let deck = $state<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
@@ -59,19 +60,22 @@
   const switchingOneDrive = $derived(storageActivity === 'connecting');
   let pickerOpen = $state(false);
   let pickerWidth = $state(0);
+  let pickerWidthInitialized = $state(false);
   let pickerResizing = $state(false);
   let addWidth = $state(0);
+  let cardWidthInitialized = false;
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
+  let viewportResizing = $state(false);
+  let viewportResizeFrame = 0;
   let addResizing = $state(false);
   const preview = import.meta.env.DEV ? new URLSearchParams(window.location.search).get('preview') : null;
-  const addPanelPixels = $derived(Math.min(viewportWidth, viewportWidth / viewportHeight >= 5 / 6
-    ? Math.min(viewportWidth * .75, Math.max(viewportHeight * .4, viewportWidth * addWidth / 100))
-    : Math.min(viewportWidth, viewportHeight * .4)));
+  const panelBounds = $derived(viewportWidth > 0 && viewportHeight > 0 ? panelWidthBounds({ width: viewportWidth, height: viewportHeight }) : null);
   const cardPanelOpen = $derived(dialogAction === 'add' || dialogAction === 'edit' || dialogAction === 'history');
 
   function openCardPanel(action: 'add' | 'edit') {
     oneDrive.closePicker(false);
+    initializeCardWidth();
     dialogAction = dialogAction === action ? null : action;
   }
 
@@ -79,7 +83,18 @@
     dialogAction = null;
   }
 
-  function updateViewport() { viewportWidth = window.innerWidth; viewportHeight = window.innerHeight; }
+  function updateViewport() {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    viewportResizing = true;
+    cancelAnimationFrame(viewportResizeFrame);
+    viewportResizeFrame = requestAnimationFrame(() => {
+      viewportResizeFrame = requestAnimationFrame(() => { viewportResizing = false; });
+    });
+    if (pickerWidthInitialized) pickerWidth = clampPanelWidth(pickerWidth, viewport);
+    if (addWidth > 0) addWidth = clampPanelWidth(addWidth, viewport);
+    viewportWidth = viewport.width;
+    viewportHeight = viewport.height;
+  }
   function alignStorageStatus(footer: HTMLElement) {
     const shell = footer.closest<HTMLElement>('.shell')!;
     const actions = footer.querySelector<HTMLElement>('.card-actions')!;
@@ -102,7 +117,7 @@
     return { destroy() { observer.disconnect(); scroll.removeEventListener('scroll', update); } };
   }
   function resizeAdd(clientX: number) {
-    addWidth = Math.min(75, Math.max(viewportHeight * .4 / viewportWidth * 100, (viewportWidth - clientX) / viewportWidth * 100));
+    addWidth = clampPanelWidth(viewportWidth - clientX, { width: viewportWidth, height: viewportHeight });
   }
 
   let backend = $state.raw<DeckBackend | undefined>();
@@ -313,21 +328,35 @@
     if (event.key === 'ArrowLeft') showPrevious();
   }
 
-  function defaultPanelWidth(property: string): number {
+  function defaultPanelWidth(wideProperty: string): number {
+    const property = window.innerWidth / window.innerHeight < 5 / 6 ? '--slide-over-default-width-ratio' : wideProperty;
     const ratio = Number(getComputedStyle(document.documentElement).getPropertyValue(property).trim());
-    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > .75) throw new Error(`${property} must be a number greater than 0 and at most 0.75.`);
-    return ratio * 100;
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) throw new Error(`${property} must be a number greater than 0 and at most 1.`);
+    return ratio * window.innerWidth;
+  }
+
+  function initializeCardWidth() {
+    if (cardWidthInitialized) return;
+    addWidth = clampPanelWidth(defaultPanelWidth('--card-panel-default-width-ratio'), { width: window.innerWidth, height: window.innerHeight });
+    cardWidthInitialized = true;
+  }
+
+  function updatePickerOpen(open: boolean) {
+    if (open && !pickerWidthInitialized) {
+      const savedPixels = Number(localStorage.getItem('onedrive-picker-width-px'));
+      if (Number.isFinite(savedPixels) && savedPixels > 0) pickerWidth = savedPixels;
+      else pickerWidth = defaultPanelWidth('--file-selector-default-width-ratio');
+      pickerWidth = clampPanelWidth(pickerWidth, { width: window.innerWidth, height: window.innerHeight });
+      pickerWidthInitialized = true;
+    }
+    pickerOpen = open;
   }
 
   onMount(() => {
     void queue.refresh().catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     window.addEventListener('online', queue.wake);
     if (lastProvider() === 'local') { choosingStorage = true; if ('showDirectoryPicker' in window) void restoreLocal(); }
-    pickerWidth = defaultPanelWidth('--file-selector-default-width-ratio');
-    addWidth = defaultPanelWidth('--card-panel-default-width-ratio');
     updateViewport();
-    const savedWidth = Number(localStorage.getItem('onedrive-picker-width'));
-    if (savedWidth >= 1 && savedWidth <= 75) pickerWidth = savedWidth;
     if (preview === 'connection-error') {
       mountLoader(async () => { throw new DeckRequestError(loadTimeoutMessage); });
     } else if (preview === 'notes-error') {
@@ -335,18 +364,18 @@
     } else {
       mountLoader();
     }
-    return () => { queue.close(); window.removeEventListener('online', queue.wake); loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); clearTimeout(blinkTimer); };
+    return () => { queue.close(); window.removeEventListener('online', queue.wake); loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); clearTimeout(blinkTimer); cancelAnimationFrame(viewportResizeFrame); };
   });
 </script>
 
 <svelte:window onkeydown={handleKey} onresize={updateViewport} onpointerdown={dismissSwitch} />
 
-<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addPanelPixels + 'px'} style:--picker-width={pickerWidth + 'vw'}>
+<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40vh, 50vw)'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
   <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
     onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
-    onActivity={value => { storageActivity = value; }} onPickerChange={value => { pickerOpen = value; }}
-    {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width', String(value)); }}
+    onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
+    {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
     onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   {#if backend}
     <aside class="storage-connection" aria-label="Card storage">
@@ -424,7 +453,7 @@
             <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
             <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
             <button class="text-action" disabled={loading || storageBusy || !backend || !!pendingWrites} onclick={refresh}>Refresh</button>
-            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
+            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
             </div>
           {/if}
         </nav>
@@ -433,7 +462,7 @@
   </div>
 
   {#if dialogAction === 'history'}
-    <HistoryPanel history={historyEntries} problem={queueProblem} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
+    <HistoryPanel history={historyEntries} problem={queueProblem} addWidth={viewportWidth ? addWidth / viewportWidth * 100 : 0} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
       void queue.reviewAgain(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     }} onDismiss={id => {
       if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
@@ -447,11 +476,11 @@
         draft={action === 'add' ? addDraft : editDrafts[cardId!]}
         onDraft={draft => { if (action === 'add') addDraft = draft; else editDrafts[cardId!] = draft; }}
         onSaved={() => { if (action === 'add') addDraft = undefined; else delete editDrafts[cardId!]; }}
-        onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { if (dialogAction === action && (action === 'add' || current?.id === cardId)) closeCardPanel(); }} />
+        onSubmit={saveCard} {pickerOpen} addWidth={viewportWidth ? addWidth / viewportWidth * 100 : 0} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { if (dialogAction === action && (action === 'add' || current?.id === cardId)) closeCardPanel(); }} />
     {/key}
   {/if}
   {#if removeOpen}
-    <CardDialog action="remove" card={current} deck={visibleDeck} {selectedSource} onSubmit={saveCard} {pickerOpen} {addWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { removeOpen = false; }} />
+    <CardDialog action="remove" card={current} deck={visibleDeck} {selectedSource} onSubmit={saveCard} {pickerOpen} {addWidth} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { removeOpen = false; }} />
   {/if}
 
   {#if showProgress}
