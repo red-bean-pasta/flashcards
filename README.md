@@ -12,6 +12,8 @@ This prototype has no spaced repetition or saved study progress.
 ![File Picker](docs/images/file_picker.png)
 ![History](docs/images/history.png)
 
+**Try it online:** https://flashcards.redbeanpasta.de
+
 ## Quick start
 
 You’ll need **Node.js 22.12+** and **npm**.
