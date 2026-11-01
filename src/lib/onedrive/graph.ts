@@ -134,7 +134,21 @@ async function httpError(response: Response, write: boolean): Promise<GraphError
   return new GraphError(message, { status: response.status, code, retryAfter: response.headers.get('Retry-After') }, uncertain, bodyFailure ? { cause: bodyFailure } : undefined);
 }
 
-async function downloadText(response: Response, maxBytes: number): Promise<string> {
+async function readDownloadChunk(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  try { return await reader.read(); }
+  catch (error) {
+    if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
+    throw new GraphError('The OneDrive download was interrupted. Try refreshing.', { status: 0, code: 'networkError' }, false, { cause: error });
+  }
+}
+
+async function stopDownload(reader: ReadableStreamDefaultReader<Uint8Array>, cause: unknown): Promise<never> {
+  try { await reader.cancel(); }
+  catch (error) { throw new AggregateError([cause, error], 'The OneDrive download failed and could not be cancelled.'); }
+  throw cause;
+}
+
+async function downloadText(response: Response, maxBytes: number, onBytes?: (bytes: number) => void): Promise<string> {
   if (response.bodyUsed) throw new TypeError('The OneDrive download body was already consumed.');
   if (response.body === null) return '';
   if (!response.body) throw new GraphError('This browser cannot stream OneDrive downloads safely.', { status: 0, code: 'streamUnavailable' });
@@ -144,20 +158,18 @@ async function downloadText(response: Response, maxBytes: number): Promise<strin
   let bytes = 0;
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await readDownloadChunk(reader);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBytes) {
-        await reader.cancel();
-        throw new GraphError('OneDrive file exceeds the remaining download limit. Choose a smaller folder or file.', { status: 0, code: 'downloadLimit' });
+        await stopDownload(reader, new GraphError('OneDrive file exceeds the remaining download limit. Choose a smaller folder or file.', { status: 0, code: 'downloadLimit' }));
       }
+      try { onBytes?.(value.byteLength); }
+      catch (error) { await stopDownload(reader, error); }
       chunks.push(decoder.decode(value, { stream: true }));
     }
     chunks.push(decoder.decode());
     return chunks.join('');
-  } catch (error) {
-    if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === 'AbortError')) throw error;
-    throw new GraphError('The OneDrive download was interrupted. Try refreshing.', { status: 0, code: 'networkError' }, false, { cause: error });
   } finally { reader.releaseLock(); }
 }
 
@@ -193,7 +205,7 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
   }
 
   async function children(id: string, signal?: AbortSignal, maxItems = 2000): Promise<GraphItem[]> {
-    let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children`;
+    let next: string | undefined = `${BASE}/me/drive/items/${segment(id)}/children?$select=id,name,eTag,file,folder,parentReference,@microsoft.graph.downloadUrl&$top=200`;
     const items: GraphItem[] = [];
     const visited = new Set<string>();
     while (next) {
@@ -217,25 +229,40 @@ export function createGraphClient(getAccessToken: () => Promise<string>, fetcher
     return items;
   }
 
-  async function readText(id: string, signal?: AbortSignal, maxBytes = 50 * 1024 * 1024): Promise<{ id: string; text: string; revision: string }> {
+  async function readText(id: string, signal?: AbortSignal, maxBytes = 50 * 1024 * 1024, options: { metadata?: GraphItem; onBytes?: (bytes: number) => void } = {}): Promise<{ id: string; text: string; revision: string }> {
+    const listed = options.metadata;
+    if (listed && listed.id !== id) throw new TypeError('Read metadata belongs to a different file.');
+    let before = requireFile(listed ?? await getItem(id, signal));
+    // Listing metadata normally includes the URL. If the service omitted this optional
+    // property, obtain fresh metadata rather than guessing a download address.
+    if (listed && !before.downloadUrl) before = requireFile(await getItem(id, signal));
     for (let attempt = 0; attempt < 3; attempt++) {
-      const before = requireFile(await getItem(id, signal));
       const response = await request(downloadUrl(before.downloadUrl), { signal }, false);
-      const text = await downloadText(response, maxBytes);
+      const text = await downloadText(response, maxBytes, options.onBytes);
       const after = requireFile(await getItem(id, signal));
       if (before.eTag === after.eTag) return { id, text, revision: after.eTag };
+      before = after;
     }
     throw new GraphError('OneDrive kept changing during the read. Refresh and try again.', { status: 409, code: 'unstableRead' });
   }
 
+  let rootRequest: Promise<GraphItem> | undefined;
+  function root(): Promise<GraphItem> {
+    // A Graph client belongs to one authenticated connection. Coalesce identity
+    // lookups for that connection; a failed request must not poison later attempts.
+    return rootRequest ??= itemRequest(`${BASE}/me/drive/special/approot`).then(item => requireFolder(item)).catch(error => {
+      rootRequest = undefined;
+      throw error;
+    });
+  }
+
   return {
     async driveId(): Promise<string> {
-      const root = requireFolder(await itemRequest(`${BASE}/me/drive/special/approot`));
-      const id = root.parentReference?.driveId;
+      const id = (await root()).parentReference?.driveId;
       if (!id) throw invalidResponse(false);
       return id;
     },
-    root: async () => requireFolder(await itemRequest(`${BASE}/me/drive/special/approot`)),
+    root,
     getItem,
     children,
     async findChild(parentId: string, name: string): Promise<GraphItem | null> {

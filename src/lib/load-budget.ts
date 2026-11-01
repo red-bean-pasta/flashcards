@@ -8,10 +8,16 @@ const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 export function createLoadBudget() {
   let count = 0;
   let total = 0;
+  let transferred = 0;
   return {
     entry(path: string) {
       if (path.split('/').length > MAX_DEPTH) throw new DeckRequestError(`Folder depth exceeds ${MAX_DEPTH}: ${path}`);
       if (++count > MAX_FILES) throw new DeckRequestError(`Folder contains more than ${MAX_FILES} entries. Choose a smaller folder.`);
+    },
+    transfer(bytes: number) {
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new TypeError('Transferred byte count must be a nonnegative integer.');
+      transferred += bytes;
+      if (transferred > MAX_TOTAL_BYTES) throw new DeckRequestError('Markdown downloads exceed the 50 MiB total limit.');
     },
     remainingEntries() { return MAX_FILES - count; },
     remainingBytes() { return Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total); },

@@ -40,11 +40,11 @@ test('untrusted pagination never receives bearer token', async () => {
 test('stable read discards raced content and pairs text with the resulting eTag', async () => {
   const { client, calls } = fake([
     Response.json(file()), new Response('old'), Response.json(file('r2')),
-    Response.json(file('r2')), new Response('new'), Response.json(file('r2')),
+    new Response('new'), Response.json(file('r2')),
   ]);
   assert.deepEqual(await client.readText('f'), { id: 'f', text: 'new', revision: 'r2' });
-  assert.equal(calls.length, 6);
-  for (const index of [1, 4]) {
+  assert.equal(calls.length, 5);
+  for (const index of [1, 3]) {
     assert.equal(new Headers(calls[index].init.headers).has('Authorization'), false);
     assert.equal(calls[index].url, 'https://variable-provider.example/signed');
   }
@@ -52,11 +52,11 @@ test('stable read discards raced content and pairs text with the resulting eTag'
 });
 
 test('stable read is bounded and refuses missing eTags, folders and insecure downloads', async () => {
-  const responses: Response[] = [];
-  for (let attempt = 0; attempt < 3; attempt++) responses.push(Response.json(file('before')), new Response('text'), Response.json(file('after')));
+  const responses: Response[] = [Response.json(file('r0'))];
+  for (let attempt = 0; attempt < 3; attempt++) responses.push(new Response('text'), Response.json(file(`r${attempt + 1}`)));
   const { client, calls } = fake(responses);
   await assert.rejects(client.readText('f'), error => error instanceof GraphError && error.code === 'unstableRead');
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 7);
   for (const value of [file(undefined, { eTag: undefined }), { id: 'f', name: 'folder', folder: {}, eTag: 'r' }, file('r', { '@microsoft.graph.downloadUrl': 'http://example.com/download' })]) {
     const { client: invalid, calls: attempts } = fake([Response.json(value)]);
     await assert.rejects(invalid.readText('f'), GraphError);
@@ -106,12 +106,15 @@ test('authorization and throttling require explicit reconnect/retry; root valida
   assert.equal(calls.length, 3);
 });
 
-test('app root and drive identity use the scoped special folder', async () => {
+test('app root and drive identity share one scoped metadata request', async () => {
   const folder = { id: 'app-root', name: 'Flashcards', folder: {}, parentReference: { driveId: 'account-drive' } };
-  const { client, calls } = fake([Response.json(folder), Response.json(folder), Response.json({ id: 'app-root', name: 'Flashcards', folder: {} })]);
-  assert.equal((await client.root()).id, 'app-root');
+  const { client, calls } = fake([Response.json(folder)]);
+  const [root, driveId] = await Promise.all([client.root(), client.driveId()]);
+  assert.equal(root.id, 'app-root');
+  assert.equal(driveId, 'account-drive');
   assert.equal(await client.driveId(), 'account-drive');
-  await assert.rejects(client.driveId(), GraphError);
+  assert.equal(calls.length, 1);
+  await assert.rejects(fake([Response.json({ id: 'app-root', name: 'Flashcards', folder: {} })]).client.driveId(), GraphError);
   assert.ok(calls.every(call => call.url === `${BASE}/me/drive/special/approot`));
 });
 
@@ -171,4 +174,34 @@ test('download limit counts actual streamed bytes and cancels before reading the
   await assert.rejects(client.readText('f', undefined, 5), error => error instanceof GraphError && error.code === 'downloadLimit');
   assert.equal(cancelled, true);
   assert.equal(calls.length, 2);
+});
+
+test('listed metadata eliminates the first lookup while retaining the post-download check', async () => {
+  const { client, calls } = fake([new Response('text'), Response.json(file())]);
+  const listed = { id: 'f', name: 'cards.md', file: {}, eTag: 'r1', downloadUrl: 'https://variable-provider.example/signed' };
+  assert.deepEqual(await client.readText('f', undefined, 100, { metadata: listed }), { id: 'f', text: 'text', revision: 'r1' });
+  assert.equal(calls.length, 2);
+  assert.equal(new Headers(calls[0].init.headers).has('Authorization'), false);
+  await assert.rejects(client.readText('wrong', undefined, 100, { metadata: listed }), TypeError);
+  assert.equal(calls.length, 2);
+});
+
+test('omitted optional listing URL is fetched explicitly and failed root lookups can retry', async () => {
+  const listed = { id: 'f', name: 'cards.md', file: {}, eTag: 'r1' };
+  const { client, calls } = fake([Response.json(file()), new Response('text'), Response.json(file())]);
+  assert.equal((await client.readText('f', undefined, 100, { metadata: listed })).text, 'text');
+  assert.equal(calls.length, 3);
+  const roots = fake([failure(503), Response.json({ id: 'root', name: 'Root', folder: {} })]);
+  await assert.rejects(roots.client.root(), GraphError);
+  assert.equal((await roots.client.root()).id, 'root');
+  assert.equal(roots.calls.length, 2);
+});
+
+test('internal download-budget errors retain their identity and cancel the stream', async () => {
+  const cause = new TypeError('Invalid budget contract');
+  let cancelled = false;
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('text')); }, cancel() { cancelled = true; } });
+  const { client } = fake([Response.json(file()), new Response(stream)]);
+  await assert.rejects(client.readText('f', undefined, 100, { onBytes() { throw cause; } }), error => error === cause);
+  assert.equal(cancelled, true);
 });

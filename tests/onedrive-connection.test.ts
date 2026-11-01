@@ -48,3 +48,20 @@ test('default and old folder memory resolve to the app root', async () => {
   assert.equal(states[0].folder.id, root.id);
   assert.equal(memory.recall(root.id), root.id);
 });
+
+test('restoring app root requires only one remote identity lookup', async () => {
+  const { createGraphClient } = await import('../src/lib/onedrive/graph.ts');
+  let calls = 0;
+  const graph = createGraphClient(async () => 'token', async () => {
+    calls++;
+    return Response.json({ ...root, parentReference: { driveId: 'drive' } });
+  });
+  const states: any[] = [];
+  const connection = createFolderConnection(graph, { recall: () => root.id, remember() {} }, state => states.push(state));
+  await connection.restore();
+  assert.equal(states[0].folder.id, root.id);
+  assert.equal(calls, 1);
+  await connection.useDefault();
+  assert.equal(calls, 1);
+  await connection.dispose();
+});

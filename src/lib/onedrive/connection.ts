@@ -36,8 +36,8 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
   async function restore(): Promise<void> {
     const root = await graph.root();
     const previous = memory.recall(root.id);
-    if (previous) await select(await graph.getItem(previous));
-    else await useDefault();
+    if (previous && previous !== root.id) await select(await graph.getItem(previous));
+    else await select(root);
   }
 
   async function dispose(): Promise<void> {

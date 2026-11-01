@@ -1,4 +1,4 @@
-import { createLoadBudget } from '../load-budget.js';
+import { loadOneDriveDeck } from './deck-load.js';
 import { archiveFilename, isNewSourceName, appendArchivedEntries } from '../card-text.js';
 import { CardParseError } from '../card-ranges.js';
 import { CardInputError } from '../card-text.js';
@@ -26,50 +26,15 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   let saving = false;
   let cacheReady = false;
 
-  async function scan(id: string, found: Map<string, GraphItem>, signal?: AbortSignal, prefix = '', ancestors = new Set<string>(), budget = createLoadBudget()): Promise<void> {
-    signal?.throwIfAborted();
-    if (ancestors.has(id)) throw new DeckRequestError('OneDrive returned a recursive folder.');
-    const nextAncestors = new Set([...ancestors, id]);
-    for (const item of await graph.children(id, signal, budget.remainingEntries())) {
-      signal?.throwIfAborted();
-      if (item.name.startsWith('.') || item.name.toLowerCase() === archiveFilename) continue;
-      const source = prefix + item.name;
-      budget.entry(source);
-      if (item.folder) await scan(item.id, found, signal, source + '/', nextAncestors, budget);
-      else if (item.file && /\.md$/i.test(item.name)) found.set(source, item);
-    }
-  }
-
   async function load(signal?: AbortSignal): Promise<DeckState> {
     cacheReady = false;
     try {
-      const found = new Map<string, GraphItem>();
-      const budget = createLoadBudget();
-      await scan(folder.id, found, signal, '', new Set(), budget);
-      const cards: DeckState['cards'] = [];
-      const errors: string[] = [];
-      const revisions: Record<string, string> = {};
-      for (const [source, item] of found) {
-        signal?.throwIfAborted();
-        try {
-          const snapshot = await graph.readText(item.id, signal, budget.remainingBytes());
-          budget.file(source, new TextEncoder().encode(snapshot.text).byteLength);
-          await cache.put(source, snapshot);
-          cards.push(...parse(snapshot.text, source));
-          revisions[source] = snapshot.revision;
-        } catch (error) {
-          if (!(error instanceof CardParseError)) throw error;
-          errors.push(error.message);
-        }
-      }
-      const archive = await graph.findChild(folder.id, archiveFilename);
-      if (archive && !archive.file) throw new DeckRequestError('removed.md is not a file.');
-      await cache.put(archiveFilename, archive ? await graph.readText(archive.id, signal) : null);
+      const loaded = await loadOneDriveDeck(graph, folder, cache, parse, signal);
       signal?.throwIfAborted();
       sources.clear();
-      for (const [source, item] of found) sources.set(source, item);
+      for (const [source, item] of loaded.sources) sources.set(source, item);
       cacheReady = true;
-      return { cards: errors.length ? [] : cards, files: [...sources.keys()].sort(), revisions, errors };
+      return loaded.deck;
     } catch (error) { asDeckError(error); }
   }
 
