@@ -16,7 +16,7 @@ export function createFolderMemory(clientId: string, storage: () => Pick<Storage
     try { raw = storage().getItem(key); }
     catch (failure) {
       if (!(failure instanceof DOMException) || failure.name !== 'SecurityError') throw failure;
-      throw new OneDriveAuthError('Browser session storage is unavailable.', 'storage', { cause: failure });
+      throw new OneDriveAuthError('Browser local storage is unavailable.', 'storage', { cause: failure });
     }
     if (raw === null) return null;
     let saved: unknown;

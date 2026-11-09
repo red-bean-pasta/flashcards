@@ -74,12 +74,12 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
   let refreshing: Promise<string> | undefined;
   let tokenQueue: Promise<void> = Promise.resolve();
 
-  // Only browser sessionStorage is used by default; dependency injection is for tests.
+  // Browser localStorage is used by default; dependency injection is for tests.
   function storageOperation<T>(operation: (storage: NonNullable<OneDriveAuthDependencies['storage']>) => T): T {
-    try { return operation(dependencies.storage ?? window.sessionStorage); }
+    try { return operation(dependencies.storage ?? window.localStorage); }
     catch (cause) {
       if (!(cause instanceof DOMException) || !['SecurityError', 'QuotaExceededError', 'InvalidStateError'].includes(cause.name)) throw cause;
-      throw new OneDriveAuthError('Browser session storage is unavailable. Allow session storage to connect OneDrive.', 'storage', { cause });
+      throw new OneDriveAuthError('Browser local storage is unavailable. Allow local storage to connect OneDrive.', 'storage', { cause });
     }
   }
   function readStored<T>(key: string, validate: (value: unknown) => value is T): T | undefined {

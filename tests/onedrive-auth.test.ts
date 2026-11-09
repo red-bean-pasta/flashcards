@@ -26,7 +26,7 @@ function setup() {
     transport: (fn: typeof fetch) => { transport = fn; } };
 }
 
-test('personal-account sign-in uses S256 PKCE, state, delegated scopes and session-only tokens', async () => {
+test('personal-account sign-in uses S256 PKCE, state, delegated scopes and persistent tokens', async () => {
   const s = setup();
   const params = await s.callback();
   assert.equal(new URL(s.navigate()).pathname, '/consumers/oauth2/v2.0/authorize');
@@ -149,7 +149,7 @@ test('a callback cannot be replayed after its one-use pending state is consumed'
   assert.equal(s.calls.length, 1);
 });
 
-test('unavailable session storage is actionable and consumed-body contract errors propagate', async () => {
+test('unavailable storage is actionable and consumed-body contract errors propagate', async () => {
   const s = setup();
   await s.callback();
   const response = Response.json({});
@@ -185,4 +185,23 @@ test('picker token requests OneDrive read-write access', async () => {
   await s.auth.completeSignIn();
   assert.equal(await s.auth.getPickerToken(), 'access');
   assert.equal(s.calls[1].body.get('scope'), 'offline_access OneDrive.ReadWrite');
+});
+
+test('auth falls back to window.localStorage by default', () => {
+  const previousWindow = (globalThis as any).window;
+  const store = new Map<string, string>();
+  (globalThis as any).window = {
+    localStorage: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
+    },
+  };
+  try {
+    const auth = createOneDriveAuth({ clientId: 'id', redirectUri: 'https://cards.example/app' });
+    assert.equal(auth.isConnected(), false);
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = previousWindow;
+  }
 });
