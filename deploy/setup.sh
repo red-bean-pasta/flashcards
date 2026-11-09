@@ -6,6 +6,9 @@ Script_Dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 Source_Dir="$(cd "$Script_Dir/.." && pwd)"
 Deploy_Dir=/srv/flashcards
 Caddy_Dir=/etc/caddy
+Backup_Dir="$Caddy_Dir/backups"
+Site_File=flashcards.caddy
+Site_Config="$Caddy_Dir/conf.d/$Site_File"
 Domain="${DOMAIN:-${SERVER_DOMAIN:-}}"
 Port="${PORT:-${SERVER_PORT:-443}}"
 Skip_Build=false
@@ -93,7 +96,8 @@ CheckPrerequisites() {
   # Serialize deployments before building or modifying shared files.
   exec 9>/run/lock/flashcards-deploy.lock
   flock -n 9 || Die 'Another Flashcards deployment is running.'
-  [[ ! -L "$Caddy_Dir/Caddyfile" && ! -L "$Caddy_Dir/conf.d/flashcards.caddy" ]] || Die 'Managed Caddy files must be regular files, not symlinks.'
+  [[ ! -L "$Caddy_Dir/Caddyfile" && ! -L "$Site_Config" ]] || Die 'Managed Caddy files must be regular files, not symlinks.'
+  [[ ! -L "$Backup_Dir" && (! -e "$Backup_Dir" || -d "$Backup_Dir") ]] || Die 'Backup directory must be a directory, not a file or symlink.'
 }
 
 BuildProject() {
@@ -132,20 +136,21 @@ StageAssets() {
 BeginTransaction() {
   [[ -d "$Caddy_Dir" ]] || install -d -m 755 "$Caddy_Dir"
   [[ -d "$Caddy_Dir/conf.d" ]] || install -d -m 755 "$Caddy_Dir/conf.d"
+  [[ -d "$Backup_Dir" ]] || install -d -m 755 "$Backup_Dir"
   Txn_Dir="$(mktemp -d)"
   local timestamp
   timestamp="$(date -u +%Y%m%dT%H%M%S%N)"
-  Root_Backup="$Caddy_Dir/Caddyfile.$timestamp.bak"
-  Site_Backup="$Caddy_Dir/conf.d/flashcards.caddy.$timestamp.bak"
+  Root_Backup="$Backup_Dir/Caddyfile.$timestamp.bak"
+  Site_Backup="$Backup_Dir/${Site_File%.*}.$timestamp.${Site_File##*.}.bak"
   [[ ! -e "$Root_Backup" && ! -L "$Root_Backup" && ! -e "$Site_Backup" && ! -L "$Site_Backup" ]] || Die 'Configuration backup already exists.'
   if [[ -e "$Caddy_Dir/Caddyfile" ]]; then
     [[ -f "$Caddy_Dir/Caddyfile" ]] || Die 'Caddyfile must be a regular file.'
     cp -p "$Caddy_Dir/Caddyfile" "$Root_Backup"
     Had_Root=true
   fi
-  if [[ -e "$Caddy_Dir/conf.d/flashcards.caddy" ]]; then
-    [[ -f "$Caddy_Dir/conf.d/flashcards.caddy" ]] || Die 'Site configuration must be a regular file.'
-    cp -p "$Caddy_Dir/conf.d/flashcards.caddy" "$Site_Backup"
+  if [[ -e "$Site_Config" ]]; then
+    [[ -f "$Site_Config" ]] || Die 'Site configuration must be a regular file.'
+    cp -p "$Site_Config" "$Site_Backup"
     Had_Site=true
   fi
   if [[ -L "$Deploy_Dir/dist" ]]; then
@@ -168,7 +173,7 @@ site = site.replace('https://{$DOMAIN:localhost}:{$PORT:443} {',
 pathlib.Path(dest).write_text(site)
 PY
   install -m 644 "$Txn_Dir/site.new" "$Caddy_Dir/conf.d/.flashcards.new"
-  mv -f "$Caddy_Dir/conf.d/.flashcards.new" "$Caddy_Dir/conf.d/flashcards.caddy"
+  mv -f "$Caddy_Dir/conf.d/.flashcards.new" "$Site_Config"
 }
 
 AdaptConfig() {
@@ -233,9 +238,9 @@ RestoreConfig() {
     rm -f "$Caddy_Dir/Caddyfile" || result=1
   fi
   if "$Had_Site"; then
-    cp -p "$Site_Backup" "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
+    cp -p "$Site_Backup" "$Site_Config" || result=1
   else
-    rm -f "$Caddy_Dir/conf.d/flashcards.caddy" || result=1
+    rm -f "$Site_Config" || result=1
   fi
   return "$result"
 }
