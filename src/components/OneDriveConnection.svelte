@@ -275,17 +275,17 @@
 <style>
   .onedrive-status:not(.has-status) { display: none; }
   .onedrive-status.has-status {
-    position: absolute; z-index: 3;
-    right: var(--status-right);
-    bottom: var(--status-bottom);
-    width: max-content;
-    max-width: calc(100% - var(--status-left) - var(--status-right));
-    max-height: 40vh; overflow: auto;
-    font-size: .78rem; text-align: right; overflow-wrap: anywhere;
+    width: 100%;
+    margin-bottom: 8px;
+    font-size: .78rem;
+    text-align: right;
+    overflow-wrap: anywhere;
   }
   .onedrive-status p { margin: 0; }
   .error-action { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; }
-  :global(.status-align-left) .onedrive-status.has-status { left: var(--status-left); right: auto; text-align: left; }
+  @media (max-width: 600px), (orientation: portrait) {
+    .onedrive-status.has-status { text-align: left; }
+  }
 
   .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: var(--picker-width); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
   .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }

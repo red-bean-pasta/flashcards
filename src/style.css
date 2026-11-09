@@ -82,13 +82,14 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) { .shell, .shell::before { transition: none; } }
 .shell.has-progress { grid-template-rows: minmax(0, 1fr) var(--progress-thickness); }
 .practice-scroll { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
-.practice-page { position: relative; min-height: 100%; display: grid; }
+.practice-page { position: relative; min-height: 100%; display: flex; flex-direction: column; }
 
 .practice {
   min-width: 0;
+  flex: 1 0 auto;
   display: grid;
   place-items: center;
-  padding: 92px 32px;
+  padding: 92px 32px 32px;
 }
 
 .flashcard {
@@ -263,11 +264,13 @@ a { color: inherit; }
 .markdown a { color: #4b7655; text-decoration: underline; }
 
 /* Page-bottom controls stay clear of long, scrollable answers. */
+.practice-footer {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 0 max(30px, env(safe-area-inset-right)) max(25px, env(safe-area-inset-bottom)) max(30px, env(safe-area-inset-left));
+}
+
 .collection-footer {
-  position: absolute;
-  bottom: max(25px, env(safe-area-inset-bottom));
-  left: max(30px, env(safe-area-inset-left));
-  right: max(30px, env(safe-area-inset-right));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -370,10 +373,10 @@ a { color: inherit; }
 @media (orientation: portrait) {
   .shell { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); }
   .shell.has-progress { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) var(--progress-thickness); }
-  .shell .remaining-line .progress-fill { transform: scaleY(var(--remaining-fraction)); }
-  .practice { padding: 86px 24px; }
+  .shell .remaining-line .progress-fill { transform: scaleY(var(--remaining-fraction)); transform-origin: bottom left; }
+  .practice { padding: 86px 24px 24px; }
   .answer { padding-top: 30px; }
-  .collection-footer { right: 20px; left: 20px; bottom: max(18px, env(safe-area-inset-bottom)); max-width: calc(100% - 40px); }
+  .practice-footer { padding: 0 20px max(18px, env(safe-area-inset-bottom)); }
   .source-choice-label { max-width: 150px; }
 }
 

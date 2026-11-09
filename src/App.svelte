@@ -95,30 +95,6 @@
     viewportWidth = viewport.width;
     viewportHeight = viewport.height;
   }
-  function alignStorageStatus(footer: HTMLElement) {
-    const shell = footer.closest<HTMLElement>('.shell')!;
-    const practicePage = footer.closest<HTMLElement>('.practice-page')!;
-    const actions = footer.querySelector<HTMLElement>('.card-actions')!;
-    const collection = footer.querySelector<HTMLElement>('.collection')!;
-    const scroll = footer.closest<HTMLElement>('.practice-scroll')!;
-    function update() {
-      const bounds = footer.getBoundingClientRect();
-      const shellBounds = shell.getBoundingClientRect();
-      shell.style.setProperty('--status-left', `${bounds.left - shellBounds.left}px`);
-      shell.style.setProperty('--status-right', `${shellBounds.right - bounds.right}px`);
-      shell.style.setProperty('--status-bottom', `${shellBounds.bottom - bounds.top + 8}px`);
-      shell.classList.toggle('status-align-left', actions.getBoundingClientRect().bottom <= collection.getBoundingClientRect().top);
-    }
-    const observer = new ResizeObserver(update);
-    // Content can move the footer without changing the footer's own size.
-    observer.observe(practicePage);
-    observer.observe(footer);
-    observer.observe(actions);
-    observer.observe(collection);
-    scroll.addEventListener('scroll', update);
-    update();
-    return { destroy() { observer.disconnect(); scroll.removeEventListener('scroll', update); } };
-  }
   function resizeAdd(clientX: number) {
     addWidth = clampPanelWidth(viewportWidth - clientX, { width: viewportWidth, height: viewportHeight });
   }
@@ -375,11 +351,6 @@
 
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40vh, 50vw)'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
-  <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
-    onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
-    onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
-    {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
-    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   {#if backend}
     <aside class="storage-connection" aria-label="Card storage">
       <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
@@ -444,22 +415,29 @@
         {/if}
       </main>
 
-      <footer class="collection-footer" use:alignStorageStatus>
-        <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
-          bind:source={selectedSource} onChange={startRound} />
-        <nav class="card-actions" aria-label="Manage cards">
-          {#if writeNotice}
-            <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
-          {:else}
-            <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
-            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
-            <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
-            <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
-            <button class="text-action" disabled={loading || storageBusy || !backend || !!pendingWrites} onclick={refresh}>Refresh</button>
-            <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
-            </div>
-          {/if}
-        </nav>
+      <footer class="practice-footer">
+        <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
+          onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
+          onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
+          {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
+          onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
+        <div class="collection-footer">
+          <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
+            bind:source={selectedSource} onChange={startRound} />
+          <nav class="card-actions" aria-label="Manage cards">
+            {#if writeNotice}
+              <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
+            {:else}
+              <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
+              <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
+              <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
+              <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
+              <button class="text-action" disabled={loading || storageBusy || !backend || !!pendingWrites} onclick={refresh}>Refresh</button>
+              <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
+              </div>
+            {/if}
+          </nav>
+        </div>
       </footer>
     </div>
   </div>
