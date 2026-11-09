@@ -49,6 +49,17 @@ export function requiresReconnect(error: unknown): boolean {
     (item instanceof DOMException && ['NotAllowedError', 'SecurityError'].includes(item.name)));
 }
 
+export function isNetworkFailure(error: unknown): boolean {
+  if (requiresReconnect(error)) return false;
+  const chain = causes(error);
+  if (chain.some(item => item instanceof AggregateError && aggregateHasDefect(item))) return false;
+  return chain.some(item =>
+    (item instanceof GraphError && (item.code === 'networkError' || item.status === 0 || [502, 503, 504].includes(item.status))) ||
+    (item instanceof OneDriveAuthError && item.code === 'network') ||
+    (item instanceof DOMException && ['NetworkError', 'TimeoutError'].includes(item.name))
+  );
+}
+
 export function serviceRetryDeadline(error: unknown, now: number): number | null {
   let result = now;
   for (const item of causes(error)) if (item instanceof GraphError) {

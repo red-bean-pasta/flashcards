@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { retryDecision } from '../src/lib/mutation-retry.ts';
+import { retryDecision, isNetworkFailure, requiresReconnect } from '../src/lib/mutation-retry.ts';
 import { DeckRequestError, RetryableLocalConflict } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
+import { OneDriveAuthError } from '../src/lib/onedrive/auth.ts';
 
 test('temporary failures back off and retain Retry-After through wrapped causes', () => {
   const now = Date.parse('2026-10-30T00:00:00Z');
@@ -44,4 +45,20 @@ test('an aggregate containing an internal defect is never retried as a network e
 test('an aggregate of external network failures remains retryable', () => {
   const failure = new AggregateError([new GraphError('offline', { status: 0, code: 'networkError' }, true, { cause: new TypeError('network') }), new GraphError('offline', { status: 503, code: 'busy' })], 'Both failed');
   assert.deepEqual(retryDecision(failure, 0, 1000, 0), { kind: 'retry', notBefore: 3000 });
+});
+
+test('isNetworkFailure identifies transient network errors and excludes auth or defects', () => {
+  assert.equal(isNetworkFailure(new GraphError('offline', { status: 0, code: 'networkError' })), true);
+  assert.equal(isNetworkFailure(new OneDriveAuthError('offline', 'network')), true);
+  assert.equal(isNetworkFailure(new DOMException('Network unavailable', 'NetworkError')), true);
+  assert.equal(isNetworkFailure(new DeckRequestError('Wrapped', { cause: new GraphError('offline', { status: 0, code: 'networkError' }) })), true);
+
+  // Auth / reconnect required
+  assert.equal(isNetworkFailure(new OneDriveAuthError('expired', 'reconnect_required')), false);
+  assert.equal(isNetworkFailure(new GraphError('expired', { status: 401, code: 'auth' })), false);
+  assert.equal(requiresReconnect(new GraphError('expired', { status: 401, code: 'auth' })), true);
+
+  // Defect / other errors
+  assert.equal(isNetworkFailure(new Error('bug')), false);
+  assert.equal(isNetworkFailure(new AggregateError([new GraphError('offline', { status: 0, code: 'networkError' }), new Error('bug')])), false);
 });
