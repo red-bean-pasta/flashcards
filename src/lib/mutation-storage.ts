@@ -86,7 +86,8 @@ function openDatabase(): Promise<IDBDatabase> {
         return;
       }
       db.createObjectStore(STORE, { keyPath: 'id' });
-      db.createObjectStore(META);
+      const meta = db.createObjectStore(META);
+      meta.put(0, 'lastOrder');
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(unsupportedVersion ? new Error('The pending changes database uses an unsupported older version.') : request.error);
