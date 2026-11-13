@@ -227,7 +227,7 @@ a { color: inherit; }
 .markdown p { margin: 0 0 18px; }
 .markdown ul, .markdown ol {
   text-align: left;
-  padding-left: 24px;
+  padding-inline-start: 2.2em;
 }
 .markdown li { margin: 7px 0; }
 .markdown blockquote {
