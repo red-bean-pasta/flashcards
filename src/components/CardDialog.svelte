@@ -17,7 +17,10 @@
   const targetCard = untrack(() => card);
   const initial = untrack(() => {
     if (action !== 'add' && !targetCard) throw new Error('Edit and Remove require a current card.');
-    return { question: action === 'add' ? '' : targetCard!.question, answer: action === 'add' ? '' : targetCard!.answer, source: selectedSource || 'default.md' };
+    const initialSource = selectedSource.endsWith('/')
+      ? `${selectedSource}default.md`
+      : (selectedSource || 'default.md');
+    return { question: action === 'add' ? '' : targetCard!.question, answer: action === 'add' ? '' : targetCard!.answer, source: initialSource };
   });
   let dialog = $state<HTMLDialogElement>(undefined!);
   let panel = $state<HTMLElement>(undefined!);

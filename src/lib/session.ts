@@ -3,7 +3,11 @@ import type { Card } from './types';
 export type PracticeSession = { order: Card[]; index: number; revealed: boolean };
 
 export function filterCards(cards: Card[], source: string): Card[] {
-  return cards.filter(card => !source || card.source === source);
+  if (!source) return cards;
+  if (source.endsWith('/')) {
+    return cards.filter(card => card.source.startsWith(source));
+  }
+  return cards.filter(card => card.source === source);
 }
 
 export function shuffleCards(cards: Card[]): Card[] {

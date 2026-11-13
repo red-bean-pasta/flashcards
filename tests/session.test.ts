@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advancePractice, hideAnswer, previousQuestion, startSession, reconcileSession, moveSession, updateSession } from '../src/lib/session.ts';
+import { advancePractice, filterCards, hideAnswer, previousQuestion, startSession, reconcileSession, moveSession, updateSession } from '../src/lib/session.ts';
 import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 const parseCards = (text: string, source: string) => parseBrowserCards(text, source, value => value);
 
@@ -83,4 +83,21 @@ test('hide restores the same question; previous returns the preceding question w
   assert.equal(previousQuestion(first), first);
   assert.throws(() => hideAnswer(startSession([])), /empty practice session/);
   assert.throws(() => previousQuestion({ ...current, index: 99 }), /invariant violated/);
+});
+
+test('filterCards filters by all materials, exact file, or directory hierarchy', () => {
+  const cA1 = parseCards('# question\nA1\n# answer\nAns', 'A1.md')[0];
+  const cB1 = parseCards('# question\nB1\n# answer\nAns', 'B/B1.md')[0];
+  const cB2 = parseCards('# question\nB2\n# answer\nAns', 'B/B2.md')[0];
+  const cDeep = parseCards('# question\nDeep\n# answer\nAns', 'B/BA1/deep.md')[0];
+  const cC1 = parseCards('# question\nC1\n# answer\nAns', 'C/C1.md')[0];
+  const cBOther = parseCards('# question\nOther\n# answer\nAns', 'B_other.md')[0];
+  const all = [cA1, cB1, cB2, cDeep, cC1, cBOther];
+
+  assert.deepEqual(filterCards(all, ''), all);
+  assert.deepEqual(filterCards(all, 'A1.md'), [cA1]);
+  assert.deepEqual(filterCards(all, 'B/B1.md'), [cB1]);
+  assert.deepEqual(filterCards(all, 'B/'), [cB1, cB2, cDeep]);
+  assert.deepEqual(filterCards(all, 'B/BA1/'), [cDeep]);
+  assert.deepEqual(filterCards(all, 'C/'), [cC1]);
 });

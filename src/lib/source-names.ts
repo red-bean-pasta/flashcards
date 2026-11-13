@@ -1,7 +1,19 @@
 import { archiveFilename } from './card-text.js';
+
+export function segmentLabel(segment: string): string {
+  return segment
+    .replace(/\.md$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\p{L}/gu, letter => letter.toUpperCase());
+}
+
 export function sourceLabel(source: string): string {
-  return source.replace(/\.md$/i, '').split('/').map(part =>
-    part.replace(/[_-]+/g, ' ').replace(/\b\p{L}/gu, letter => letter.toUpperCase())).join(' / ');
+  const clean = source.replace(/\.md$/i, '').replace(/\/$/, '');
+  return clean
+    .split('/')
+    .filter(Boolean)
+    .map(segmentLabel)
+    .join(' / ');
 }
 
 function newSource(label: string): string {

@@ -7,6 +7,8 @@ test('exact display labels match existing files regardless of case and surroundi
     source: 'Speaking_Rephrases.MD', create: false, error: '',
   });
   assert.equal(sourceLabel('speaking/part_two.MD'), 'Speaking / Part Two');
+  assert.equal(sourceLabel('speaking/'), 'Speaking');
+  assert.equal(sourceLabel('speaking/part_two/'), 'Speaking / Part Two');
 });
 
 test('colliding display labels require a choice and preserve the chosen filename', () => {
