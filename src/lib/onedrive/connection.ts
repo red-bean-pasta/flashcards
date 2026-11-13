@@ -19,11 +19,11 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
     const previous = current;
     current = store;
     onChange({ folder, backend: {
-      load: signal => store.load(signal),
-      mutate: (request, snapshot) => store.mutate(request, snapshot),
+      load: store.load,
+      mutate: store.mutate,
       persistent: {
         destination: { provider: 'onedrive', driveId, folderId: folder.id },
-        execute: (item, checkpoint, recovered) => store.execute(item, checkpoint, recovered),
+        execute: store.execute,
       },
     } });
     if (previous) await previous.dispose();

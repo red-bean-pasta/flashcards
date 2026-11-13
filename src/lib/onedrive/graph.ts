@@ -151,9 +151,9 @@ async function stopDownload(reader: ReadableStreamDefaultReader<Uint8Array>, cau
 
 async function downloadText(response: Response, maxBytes: number, onBytes?: (bytes: number) => void): Promise<string> {
   if (response.bodyUsed) throw new TypeError('The OneDrive download body was already consumed.');
-  if (response.body === null) return '';
-  if (!response.body) throw new GraphError('This browser cannot stream OneDrive downloads safely.', { status: 0, code: 'streamUnavailable' });
-  const reader = response.body.getReader();
+  const body = response.body;
+  if (body === null) return '';
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
   let bytes = 0;

@@ -19,4 +19,3 @@ export type MutationRequest = { source: string; revision: string | null } & (
   | { action: 'edit'; index: number; question: string; answer: string }
   | { action: 'remove'; index: number }
 );
-export type MutationResult = { source: string; revision: string; cards: Card[] };

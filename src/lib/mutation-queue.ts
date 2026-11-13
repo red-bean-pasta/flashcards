@@ -193,7 +193,6 @@ export function createMutationQueue(callbacks: QueueCallbacks, storage: Storage 
       await refresh();
       const item = items.find(value => value.id === id);
       if (!item || !item.review || !selected.persistent || !await sameDestination(item.destination, selected.persistent.destination)) throw new DeckRequestError('Connect the original folder to dismiss this pending change.');
-      await selected.persistent.discard?.(id);
       await storage.remove(id);
       fresh.delete(id);
       projected.delete(id);

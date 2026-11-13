@@ -40,15 +40,18 @@ export function startSession(cards: Card[]): PracticeSession {
 }
 
 function partitionCards(order: Card[], cards: Card[]): { retained: Card[]; added: Card[] } {
-  assertUniqueCards(cards);
   const byId = new Map(cards.map(card => [card.id, card]));
+  if (byId.size !== cards.length) {
+    throw new Error('Practice session invariant violated: duplicate card IDs.');
+  }
   const retained: Card[] = [];
   for (const card of order) {
     const replacement = byId.get(card.id);
-    if (replacement) retained.push(replacement);
+    if (!replacement) continue;
+    retained.push(replacement);
+    byId.delete(card.id);
   }
-  const retainedIds = new Set(retained.map(card => card.id));
-  return { retained, added: cards.filter(card => !retainedIds.has(card.id)) };
+  return { retained, added: [...byId.values()] };
 }
 
 export function reconcileSession(previous: PracticeSession, cards: Card[]): PracticeSession {
@@ -75,7 +78,7 @@ export function advancePractice(previous: PracticeSession): PracticeSession {
   if (!previous.order.length) throw new Error('Cannot advance an empty practice session.');
   if (!previous.revealed) return { ...previous, revealed: true };
   if (previous.index === previous.order.length - 1) return startSession(previous.order);
-  return moveSession(previous, 1);
+  return { ...previous, index: previous.index + 1, revealed: false };
 }
 
 export function hideAnswer(previous: PracticeSession): PracticeSession {

@@ -9,6 +9,7 @@ type FolderScan = { id: string; prefix: string; ancestors: Set<string> };
 /** List sibling folders together, then assemble the original depth-first source order. */
 export async function scanOneDriveFolder(graph: GraphClient, root: GraphItem, budget: ReturnType<typeof createLoadBudget>, signal?: AbortSignal) {
   const listings = new Map<string, GraphItem[]>();
+  let rootChildren: GraphItem[] | undefined;
   let pending: FolderScan[] = [{ id: root.id, prefix: '', ancestors: new Set() }];
   while (pending.length) {
     const wave = await mapConcurrent(pending, async (folder, activeSignal) => {
@@ -22,7 +23,8 @@ export async function scanOneDriveFolder(graph: GraphClient, root: GraphItem, bu
     pending = [];
     for (const { folder, children, visible } of wave) {
       if (listings.has(folder.id)) throw new DeckRequestError('OneDrive returned a duplicate folder.');
-      listings.set(folder.id, children);
+      if (folder.id === root.id) rootChildren = children;
+      listings.set(folder.id, visible);
       for (const item of visible) {
         if (item.folder) pending.push({ id: item.id, prefix: folder.prefix + item.name + '/', ancestors: new Set([...folder.ancestors, folder.id]) });
       }
@@ -34,7 +36,6 @@ export async function scanOneDriveFolder(graph: GraphClient, root: GraphItem, bu
     const children = listings.get(id);
     if (!children) throw new Error('Scanned folder listing is missing.');
     for (const item of children) {
-      if (item.name.startsWith('.') || item.name.toLowerCase() === archiveFilename) continue;
       const source = prefix + item.name;
       if (item.folder) collect(item.id, source + '/');
       else if (item.file && /\.md$/i.test(item.name)) {
@@ -44,13 +45,12 @@ export async function scanOneDriveFolder(graph: GraphClient, root: GraphItem, bu
     }
   }
   collect(root.id, '');
-  const archive = findArchive(listings, root.id);
+  if (!rootChildren) throw new Error('Scanned root listing is missing.');
+  const archive = findArchive(rootChildren);
   return { sources, archive };
 }
 
-function findArchive(listings: Map<string, GraphItem[]>, rootId: string): GraphItem | undefined {
-  const children = listings.get(rootId);
-  if (!children) throw new Error('Scanned root listing is missing.');
+function findArchive(children: GraphItem[]): GraphItem | undefined {
   const archives = children.filter(item => item.name.toLowerCase() === archiveFilename);
   if (archives.length > 1) throw new DeckRequestError('OneDrive returned duplicate removed.md entries.');
   const archive = archives[0];

@@ -45,13 +45,17 @@ export function inspectMarkdown(text: string): MarkdownStructure {
   return structure;
 }
 
-export function extractContent(text: string, start: number, end: number, ignored: Span[]): string {
-  let cursor = start;
-  let content = '';
-  for (const span of ignored) {
-    if (span.start < start || span.end > end) continue;
-    content += text.slice(cursor, span.start);
-    cursor = span.end;
-  }
-  return (content + text.slice(cursor, end)).trim();
+export function createContentReader(text: string, ignored: Span[]) {
+  let index = 0;
+  // Preamble, questions and answers are read in source order.
+  return (start: number, end: number): string => {
+    let content = '';
+    while (index < ignored.length && ignored[index].start < start) index++;
+    while (index < ignored.length && ignored[index].end <= end) {
+      const span = ignored[index++];
+      content += text.slice(start, span.start);
+      start = span.end;
+    }
+    return (content + text.slice(start, end)).trim();
+  };
 }

@@ -23,12 +23,17 @@ function newSource(label: string): string {
 }
 
 export function resolveSource(files: string[], text: string, chosen: string) {
-  const matching = files.filter(source => sourceLabel(source).toLowerCase() === text.trim().toLowerCase());
-  if (!chosen && matching.length > 1) {
-    return { source: '', create: false, error: 'Choose the intended file from the suggestions.' };
+  let match: string | undefined;
+  if (!chosen) {
+    const label = text.trim().toLowerCase();
+    for (const file of files) {
+      if (sourceLabel(file).toLowerCase() !== label) continue;
+      if (match !== undefined) return { source: '', create: false, error: 'Choose the intended file from the suggestions.' };
+      match = file;
+    }
   }
-  const create = !chosen && matching.length === 0;
-  const source = chosen || matching[0] || newSource(text);
+  const create = !chosen && match === undefined;
+  const source = chosen || match || newSource(text);
   if (!source) return { source: '', create: false, error: 'Enter a file name.' };
   const error = source.toLowerCase() === archiveFilename ? 'removed.md is reserved for archived cards.' : '';
   return { source, create, error };

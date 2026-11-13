@@ -32,10 +32,14 @@ export function asDeckError(error: unknown): never {
   throw error;
 }
 
+function retryableConflict(cause: GraphError) {
+  return new GraphError('OneDrive changed repeatedly. The save will retry with the latest file.', { status: cause.status, code: 'retryableConflict' }, false, { cause });
+}
+
 export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse = parseBrowserCards, cache: SnapshotCache = createSnapshotCache()) {
   if (!folder.folder) throw new Error('A OneDrive deck requires a folder item.');
   const projectOperation = createOperationProjector(parse);
-  const sources = new Map<string, GraphItem>();
+  let sources = new Map<string, GraphItem>();
   let saving = false;
   let cacheReady = false;
 
@@ -44,8 +48,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     try {
       const loaded = await loadOneDriveDeck(graph, folder, cache, parse, signal);
       signal?.throwIfAborted();
-      sources.clear();
-      for (const [source, item] of loaded.sources) sources.set(source, item);
+      sources = loaded.sources;
       cacheReady = true;
       return loaded.deck;
     } catch (error) { asDeckError(error); }
@@ -78,14 +81,14 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
   // of rereading content in the usual no-race case. publish uses If-Match (or
   // no-clobber creation); a definite 409/412 causes refresh and replanning.
   // Path-membership checks still apply; uncertain writes must not be blindly replayed.
-  async function sourcePlan(operation: CardOperation, snapshot: DeckState, refresh = false): Promise<{ plan: MutationWritePlan; removed: string }> {
+  async function sourcePlan(operation: CardOperation, refresh = false): Promise<{ plan: MutationWritePlan; removed: string }> {
     let before = refresh ? await refreshSnapshot(operation.source) : await cache.get(operation.source);
     if (before === undefined) {
       if (!sources.has(operation.source) && isNewSourceName(operation.source) && operation.action === 'add') before = null;
       else before = await refreshSnapshot(operation.source);
     }
     if (!before && operation.action !== 'add') throw new DeckRequestError('This card file is no longer available. Refresh to review your notes.');
-    validateTargets(before?.text ?? '', operation, snapshot);
+    validateTargets(operation);
     const change = planContent(before?.text ?? '', operation);
     return { plan: { id: before?.id ?? null, name: operation.source, before: before?.text ?? null, revision: before?.revision ?? null, after: change.text }, removed: change.removed };
   }
@@ -126,10 +129,29 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     saving = true;
     async function advance(patch: Partial<StoredMutation>) { Object.assign(item, patch); await checkpoint(item); }
 
+    async function publishPlannedWrite(plan: MutationWritePlan, target: 'archive' | 'source') {
+      if (plan.id) await validateSourcePath(plan.name, plan.id);
+      await advance({ stage: `${target}-writing` });
+      try {
+        const saved = await publish(plan);
+        await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
+      } catch (error) {
+        if (error instanceof OneDriveAuthError) {
+          await advance({ stage: `${target}-ready` });
+          throw error;
+        }
+        if (!(error instanceof GraphError) || error.uncertain) throw error;
+        await advance({ stage: `${target}-ready` });
+        await refreshRejected(plan.name, error);
+        if (![409, 412].includes(error.status)) throw error;
+        return error;
+      }
+    }
+
     async function preparePlans() {
       if (!item.sourceWrite) {
         await advance({ stage: 'preparing' });
-        const source = await sourcePlan(item.operation, item.snapshot);
+        const source = await sourcePlan(item.operation);
         const archive = item.operation.action === 'remove' ? await archivePlan(source.removed) : undefined;
         await advance({ sourceWrite: source.plan, archiveWrite: archive, stage: archive ? 'archive-ready' : 'source-ready' });
       }
@@ -152,24 +174,11 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             }
             await advance({ stage: 'source-ready' }); return;
           }
-          if (plan.id) await validateSourcePath(plan.name, plan.id);
-          await advance({ stage: 'archive-writing' });
-          try {
-            const saved = await publish(plan);
-            await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
-          }
-          catch (error) {
-            if (error instanceof OneDriveAuthError) {
-              await advance({ stage: 'archive-ready' });
-              throw error;
-            }
-            if (!(error instanceof GraphError) || error.uncertain) throw error;
-            await advance({ stage: 'archive-ready' });
-            await refreshRejected(plan.name, error);
-            if (![409, 412].includes(error.status)) throw error;
+          const conflict = await publishPlannedWrite(plan, 'archive');
+          if (conflict) {
             const removed = planContent(item.sourceWrite!.before ?? '', item.operation).removed;
             await advance({ archiveWrite: await archivePlan(removed), stage: 'archive-ready' });
-            if (attempt === 2) throw new GraphError('OneDrive changed repeatedly. The save will retry with the latest file.', { status: error.status, code: 'retryableConflict' }, false, { cause: error });
+            if (attempt === 2) throw retryableConflict(conflict);
             continue;
           }
           await advance({ stage: 'source-ready' });
@@ -186,7 +195,7 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
           const plan = item.sourceWrite!;
           if (plan.before === plan.after) {
             if (!confirmedNoop) {
-              const replacement = await sourcePlan(item.operation, item.snapshot, true);
+              const replacement = await sourcePlan(item.operation, true);
               const archive = item.operation.action === 'remove' ? await archivePlan(replacement.removed) : undefined;
               await advance({ sourceWrite: replacement.plan, archiveWrite: archive, stage: archive ? 'archive-ready' : 'source-ready' });
               if (archive) await recoverAndPublishArchive();
@@ -195,25 +204,12 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             }
             await advance({ stage: 'releasing' }); break;
           }
-          if (plan.id) await validateSourcePath(plan.name, plan.id);
-          await advance({ stage: 'source-writing' });
-          try {
-            const saved = await publish(plan);
-            await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
-          }
-          catch (error) {
-            if (error instanceof OneDriveAuthError) {
-              await advance({ stage: 'source-ready' });
-              throw error;
-            }
-            if (!(error instanceof GraphError) || error.uncertain) throw error;
-            await advance({ stage: 'source-ready' });
-            await refreshRejected(plan.name, error);
-            if (![409, 412].includes(error.status)) throw error;
-            const replacement = await sourcePlan(item.operation, item.snapshot);
+          const conflict = await publishPlannedWrite(plan, 'source');
+          if (conflict) {
+            const replacement = await sourcePlan(item.operation);
             const archive = item.operation.action === 'remove' ? await archivePlan(replacement.removed, true) : undefined;
             await advance({ sourceWrite: replacement.plan, archiveWrite: archive, stage: archive ? 'archive-ready' : 'source-ready' });
-            if (attempt === 2) throw new GraphError('OneDrive changed repeatedly. The save will retry with the latest file.', { status: error.status, code: 'retryableConflict' }, false, { cause: error });
+            if (attempt === 2) throw retryableConflict(conflict);
             if (archive) await recoverAndPublishArchive();
             continue;
           }

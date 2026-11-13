@@ -22,17 +22,17 @@ function report(error: unknown): never {
 export type AccessibleDirectory = Directory & { queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>; requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState> };
 
 export function createLocalFolderBackend(root: Directory, parse = parseBrowserCards): DeckBackend {
-  const sources = new Map<string, FileSystemFileHandle>();
+  let sources = new Map<string, FileSystemFileHandle>();
   const project = createOperationProjector(parse);
   let saving = false;
 
-  async function scan(directory: Directory, found: Map<string, FileSystemFileHandle>, signal?: AbortSignal, prefix = '', budget = createLoadBudget()): Promise<void> {
+  async function scan(directory: Directory, found: Map<string, FileSystemFileHandle>, budget: ReturnType<typeof createLoadBudget>, signal?: AbortSignal, prefix = ''): Promise<void> {
     for await (const entry of directory.values()) {
       signal?.throwIfAborted();
       if (entry.name.startsWith('.') || entry.name.toLowerCase() === archiveFilename) continue;
       const path = prefix + entry.name;
       budget.entry(path);
-      if (entry.kind === 'directory') await scan(entry as Directory, found, signal, path + '/', budget);
+      if (entry.kind === 'directory') await scan(entry as Directory, found, budget, signal, path + '/');
       else if (/\.md$/i.test(entry.name)) found.set(path, entry as FileSystemFileHandle);
     }
   }
@@ -41,7 +41,7 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     try {
       const found = new Map<string, FileSystemFileHandle>();
       const budget = createLoadBudget();
-      await scan(root, found, signal, '', budget);
+      await scan(root, found, budget, signal);
       const cards: DeckState['cards'] = [];
       const revisions: Record<string, string> = {};
       const errors: string[] = [];
@@ -54,8 +54,7 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
         revisions[source] = `${file.lastModified}:${file.size}`;
       }
       signal?.throwIfAborted();
-      sources.clear();
-      for (const [path, handle] of found) sources.set(path, handle);
+      sources = found;
       return { cards: errors.length ? [] : cards, files: [...found.keys()].sort(), revisions, errors };
     } catch (error) { report(error); }
   }
@@ -100,7 +99,7 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
       sources.set(operation.source, handle);
     }
     const before = await (await handle.getFile()).text();
-    validateTargets(before, operation, item.snapshot);
+    validateTargets(operation);
     const change = planContent(before, operation);
     const source: MutationWritePlan = { id: operation.source, name: operation.source, before, after: change.text, revision: null };
     if (operation.action !== 'remove') return { source };

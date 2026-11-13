@@ -4,14 +4,14 @@ import type { FileSnapshot, SnapshotCache } from './snapshot-cache.js';
 import { mapConcurrent } from './concurrent-map.js';
 
 export const FILE_READ_CONCURRENCY = 10;
-type Entry = { source: string; item: GraphItem; snapshot?: FileSnapshot; text?: string; hit: boolean };
+type Entry = { source: string; item: GraphItem; snapshot?: FileSnapshot; text?: string };
 type Budget = ReturnType<typeof createLoadBudget>;
 
 async function inspectCache(cache: SnapshotCache, [source, item]: [string, GraphItem], signal: AbortSignal): Promise<Entry> {
   const cached = await cache.get(source);
   signal.throwIfAborted();
   const hit = cached != null && cached.id === item.id && item.eTag !== undefined && cached.revision === item.eTag;
-  return { source, item, snapshot: hit ? cached : undefined, hit };
+  return { source, item, snapshot: hit ? cached : undefined };
 }
 
 async function downloadEntry(graph: GraphClient, entry: Entry, budget: Budget, signal: AbortSignal): Promise<void> {
@@ -33,8 +33,7 @@ async function acceptSnapshot(graph: GraphClient, cache: SnapshotCache, entry: E
 
 function accountCachedSnapshots(entries: Entry[], budget: Budget): void {
   for (const entry of entries) {
-    if (!entry.hit) continue;
-    if (!entry.snapshot) throw new Error('Cache hit requires a snapshot.');
+    if (!entry.snapshot) continue;
     const bytes = new TextEncoder().encode(entry.snapshot.text).byteLength;
     budget.transfer(bytes);
     budget.file(entry.source, bytes);
@@ -45,7 +44,7 @@ function accountCachedSnapshots(entries: Entry[], budget: Budget): void {
 export async function readOneDriveFiles(graph: GraphClient, cache: SnapshotCache, entries: [string, GraphItem][], budget: Budget, signal?: AbortSignal) {
   const prepared = await mapConcurrent(entries, (entry, activeSignal) => inspectCache(cache, entry, activeSignal), signal, FILE_READ_CONCURRENCY);
   accountCachedSnapshots(prepared, budget);
-  const missing = prepared.filter(entry => !entry.hit);
+  const missing = prepared.filter(entry => !entry.snapshot);
   await mapConcurrent(missing, (entry, activeSignal) => downloadEntry(graph, entry, budget, activeSignal), signal, FILE_READ_CONCURRENCY);
   const verified = await graph.getItems(missing.map(entry => entry.item.id), signal);
   if (verified.length !== missing.length) throw new Error('Revision check returned an unexpected item count.');

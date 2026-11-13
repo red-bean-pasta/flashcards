@@ -27,8 +27,9 @@ export function isUnchangedEdit(operation: CardOperation): boolean {
 }
 
 export function validateSource(source: string): void {
-  if (!source || source.includes('\\') || source.includes('\0') || source.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.')) ||
-      !/\.md$/i.test(source) || source.split('/').at(-1)!.toLowerCase() === archiveFilename) {
+  const parts = source.split('/');
+  if (source.includes('\\') || source.includes('\0') || parts.some(part => !part || part.startsWith('.')) ||
+      !/\.md$/i.test(source) || parts.at(-1)!.toLowerCase() === archiveFilename) {
     throw new DeckRequestError('Choose a Markdown file other than removed.md.');
   }
 }
@@ -52,13 +53,21 @@ export function planContent(text: string, operation: CardOperation): ContentChan
   if (!operation.original) throw new Error('Edit/remove operations require an original pair.');
   const matches = ranges.filter(range => samePair(range.content, operation.original!));
   const replacement = operation.action === 'edit' ? formatEntry(operation.replacement.question, operation.replacement.answer, eol) : '';
-  let next = text;
-  for (const range of [...matches].reverse()) next = next.slice(0, range.start) + replacement + next.slice(range.end);
-  return { text: next, removed: operation.action === 'remove' ? matches.map(range => text.slice(range.start, range.end)).join('') : '', matched: matches.length };
+  const chunks: string[] = [];
+  const removed: string[] = [];
+  let cursor = 0;
+  // Match offsets refer to the original Markdown.
+  for (const { start, end } of matches) {
+    chunks.push(text.slice(cursor, start), replacement);
+    if (operation.action === 'remove') removed.push(text.slice(start, end));
+    cursor = end;
+  }
+  chunks.push(text.slice(cursor));
+  return { text: chunks.join(''), removed: removed.join(''), matched: matches.length };
 }
 
 /** Check the operation contract; matching is determined against the latest file. */
-export function validateTargets(_text: string, operation: CardOperation, _snapshot: DeckState): void {
+export function validateTargets(operation: CardOperation): void {
   if (operation.action === 'add') return;
   if (!operation.original) throw new Error('Mutation requires an original pair.');
 }
