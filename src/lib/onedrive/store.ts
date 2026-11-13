@@ -159,6 +159,10 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
           }
           catch (error) {
+            if (error instanceof OneDriveAuthError) {
+              await advance({ stage: 'archive-ready' });
+              throw error;
+            }
             if (!(error instanceof GraphError) || error.uncertain) throw error;
             await advance({ stage: 'archive-ready' });
             await refreshRejected(plan.name, error);
@@ -198,6 +202,10 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
           }
           catch (error) {
+            if (error instanceof OneDriveAuthError) {
+              await advance({ stage: 'source-ready' });
+              throw error;
+            }
             if (!(error instanceof GraphError) || error.uncertain) throw error;
             await advance({ stage: 'source-ready' });
             await refreshRejected(plan.name, error);

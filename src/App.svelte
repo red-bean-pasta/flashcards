@@ -51,6 +51,7 @@
     answer: item.operation.action === 'remove' ? item.operation.original!.answer : item.operation.replacement.answer,
     status: !matchedIds.includes(item.id) ? 'disconnected' as const : item.review ? 'needs-review' as const : activeId === item.id ? queueActivity ?? 'applying' : item.retryAt ? 'waiting' as const : 'queued' as const,
     error: item.error, retryAt: item.retryAt, canDismiss: matchedIds.includes(item.id) && !activeId, canReview: matchedIds.includes(item.id) && !activeId && !item.retryBlocked,
+    reconnect: item.reconnect,
     source: item.operation.source, stage: item.stage, sourceBefore: item.sourceWrite?.before, sourceAfter: item.sourceWrite?.after,
     archiveBefore: item.archiveWrite?.before, archiveAfter: item.archiveWrite?.after,
   })), ...history.filter(entry => !pendingItems.some(item => item.id === entry.id))].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
@@ -448,7 +449,7 @@
     }} onDismiss={id => {
       if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
       else history = history.filter(entry => entry.id !== id);
-    }} />
+    }} onReconnect={() => oneDrive.reconnect()} />
   {:else if dialogAction === 'add' || (dialogAction === 'edit' && current)}
     {#key dialogAction === 'edit' ? current?.id : 'add'}
       {@const action = dialogAction}

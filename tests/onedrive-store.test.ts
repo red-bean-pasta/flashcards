@@ -4,6 +4,7 @@ import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { DeckRequestError } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
 import type { GraphClient, GraphItem } from '../src/lib/onedrive/graph.ts';
+import { OneDriveAuthError } from '../src/lib/onedrive/auth.ts';
 import { createOneDriveStore, asDeckError } from '../src/lib/onedrive/store.ts';
 import { captureOperation } from '../src/lib/onedrive/operations.ts';
 import type { StoredMutation } from '../src/lib/mutation-storage.ts';
@@ -484,6 +485,38 @@ test('repeated archive conflicts retain a retryable removal', async () => {
   assert.equal(f.text('root', 'removed.md'), entry('Other') + entry('Old'));
 });
 
+
+test('auth failure during source write reverts stage to source-ready and rethrows auth error', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  const store = f.store();
+  const deck = await store.load();
+  const request = { action: 'add' as const, source: 'deck.md', revision: deck.revisions['deck.md'], question: 'New', answer: 'Answer' };
+  const item: StoredMutation = { id: 'auth-source', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  f.hooks.before = write => { if (write.name === 'deck.md') throw new OneDriveAuthError('Session expired. Reconnect OneDrive.', 'reconnect_required'); };
+  await assert.rejects(store.execute(item, async () => {}), error => error instanceof DeckRequestError && error.cause instanceof OneDriveAuthError && error.cause.reconnectRequired);
+  assert.equal(item.stage, 'source-ready');
+  f.hooks.before = undefined;
+  await store.execute(item, async () => {});
+  assert.equal(f.text('root', 'deck.md'), entry('Old') + entry('New'));
+});
+
+test('auth failure during archive write reverts stage to archive-ready and rethrows auth error', async () => {
+  const f = fixture();
+  f.put('root', 'deck.md', entry('Old'));
+  f.put('root', 'removed.md', entry('Other'));
+  const store = f.store();
+  const deck = await store.load();
+  const request = { action: 'remove' as const, source: 'deck.md', revision: deck.revisions['deck.md'], index: 0 };
+  const item: StoredMutation = { id: 'auth-archive', createdAt: 1, destination: { provider: 'onedrive', driveId: 'drive', folderId: 'root' }, request, operation: captureOperation(deck, request), snapshot: deck, stage: 'queued', attempts: 0 };
+  f.hooks.before = write => { if (write.name === 'removed.md') throw new OneDriveAuthError('Session expired. Reconnect OneDrive.', 'reconnect_required'); };
+  await assert.rejects(store.execute(item, async () => {}), error => error instanceof DeckRequestError && error.cause instanceof OneDriveAuthError && error.cause.reconnectRequired);
+  assert.equal(item.stage, 'archive-ready');
+  f.hooks.before = undefined;
+  await store.execute(item, async () => {});
+  assert.equal(f.text('root', 'deck.md'), '');
+  assert.equal(f.text('root', 'removed.md'), entry('Other') + entry('Old'));
+});
 
 test('parallel external failures are presentable without concealing mixed internal defects', () => {
   const external = new GraphError('Rate limited; retry after 17 seconds.', {status:429, code:'throttled'});

@@ -464,6 +464,17 @@ dialog.remove-banner.picker-open { left: var(--picker-visible-width); width: cal
 .history-status.failed, .history-error { color: #b52f2f; }
 .history-error { margin: 0; overflow-wrap: anywhere; }
 .history-entry > button { justify-self: start; }
+.history-entry button.text-action {
+  display: inline;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.history-entry button.text-action:hover:enabled { color: #345843; }
+.history-entry p { margin: 0; }
+.history-actions { color: #75806e; }
 
 /* Keep banners within the area left of an open side panel. */
 @media (aspect-ratio < 5/6) { .shell.card-panel-open .storage-connection { right: var(--add-panel-width); } }

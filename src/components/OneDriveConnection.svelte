@@ -292,6 +292,11 @@
     await run(connect, 'connecting');
   }
 
+  export function reconnect() {
+    if (!auth) throw new Error('OneDrive authentication was not initialized.');
+    return run(() => auth!.startSignIn());
+  }
+
   export function clearActionError() {
     actionError = '';
     lastFailure = null;

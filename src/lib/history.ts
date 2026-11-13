@@ -9,6 +9,7 @@ export interface HistoryEntry {
   retryAt?: number;
   canDismiss?: boolean;
   canReview?: boolean;
+  reconnect?: boolean;
   source?: string;
   stage?: string;
   sourceBefore?: string | null;

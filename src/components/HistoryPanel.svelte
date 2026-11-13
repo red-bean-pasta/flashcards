@@ -3,9 +3,10 @@
   import type { HistoryEntry } from '../lib/history';
   import { panelTransition } from '../lib/panel-transition';
 
-  let { history, problem = '', addWidth, panelBounds, viewportWidth, onResizeAdd, onAddResizing, onClose, onDismiss, onReview }: {
+  let { history, problem = '', addWidth, panelBounds, viewportWidth, onResizeAdd, onAddResizing, onClose, onDismiss, onReview, onReconnect }: {
     history: HistoryEntry[]; addWidth: number; panelBounds: { min: number; max: number } | null; viewportWidth: number; onResizeAdd: (x: number) => void;
     problem?: string; onAddResizing: (value: boolean) => void; onClose: () => void; onDismiss: (id: string) => void; onReview: (id: string) => void;
+    onReconnect?: () => void;
   } = $props();
   let panel: HTMLElement;
   let now = $state(Date.now());
@@ -43,33 +44,34 @@
 
 # answer
 {entry.answer}</pre></summary></details>
-          <div class="history-status" class:success={entry.status === 'success'} class:failed={entry.status === 'failed' || entry.status === 'needs-review'} role="status">
-            {#if entry.status === 'waiting'}{entry.error} {countdown(entry.retryAt!)}
-            {:else if entry.status === 'applying'}Applying…
-            {:else if entry.status === 'retrying'}Retrying…
-            {:else if entry.status === 'reviewing'}Reviewing…
-            {:else if entry.status === 'queued'}Waiting for earlier changes…
-            {:else if entry.status === 'disconnected'}Reconnect the original folder to continue.
-            {:else if entry.status === 'needs-review'}Needs Review
-            {:else if entry.status === 'success'}Success
-            {:else}Failed{/if}
-          </div>
-          {#if entry.error && entry.status !== 'waiting'}<p class="history-error">{entry.error}</p>{/if}
           {#if entry.status === 'needs-review'}
-            <p>Check {entry.source} and, for removals, removed.md before dismissing. Dismissing keeps the current files.</p>
-            {#if entry.sourceAfter !== undefined}
-              <details><summary>Source before save</summary><pre>{entry.sourceBefore ?? '(new file)'}</pre></details>
-              <details><summary>Prepared source after save</summary><pre>{entry.sourceAfter}</pre></details>
-            {/if}
-            {#if entry.archiveAfter !== undefined}
-              <details><summary>Archive before save</summary><pre>{entry.archiveBefore ?? '(new file)'}</pre></details>
-              <details><summary>Prepared archive after save</summary><pre>{entry.archiveAfter}</pre></details>
-            {/if}
-          {/if}
-          {#if entry.status === 'failed'}<button class="text-action" onclick={() => onDismiss(entry.id)}>Dismiss</button>
-          {:else if entry.status === 'needs-review'}
-            {#if entry.canReview}<button class="text-action" onclick={() => onReview(entry.id)}>Review again</button>{/if}
-            {#if entry.canDismiss}<button class="text-action" onclick={() => onDismiss(entry.id)}>Keep current files and dismiss</button>{/if}
+            <p class="history-status failed">
+              Review Required:{' '}
+              {#if entry.reconnect}
+                {#if onReconnect}<button class="text-action" onclick={onReconnect}>Reconnect</button>{:else}Reconnect{/if} OneDrive to continue.
+              {:else if entry.error}
+                {entry.error}
+              {:else}
+                Review the files manually before dismissing.
+              {/if}
+            </p>
+            <p class="history-actions">
+              {#if entry.canReview}<button class="text-action" onclick={() => onReview(entry.id)}>Retry</button>{' '}or{/if}
+              {#if entry.canDismiss}{' '}<button class="text-action" onclick={() => onDismiss(entry.id)}>keep current files and dismiss</button>{/if}
+            </p>
+          {:else}
+            <div class="history-status" class:success={entry.status === 'success'} class:failed={entry.status === 'failed'} role="status">
+              {#if entry.status === 'waiting'}{entry.error} {countdown(entry.retryAt!)}
+              {:else if entry.status === 'applying'}Applying…
+              {:else if entry.status === 'retrying'}Retrying…
+              {:else if entry.status === 'reviewing'}Reviewing…
+              {:else if entry.status === 'queued'}Waiting for earlier changes…
+              {:else if entry.status === 'disconnected'}Reconnect the original folder to continue.
+              {:else if entry.status === 'success'}Success
+              {:else}Failed{/if}
+            </div>
+            {#if entry.error && entry.status !== 'waiting'}<p class="history-error">{entry.error}</p>{/if}
+            {#if entry.status === 'failed'}<button class="text-action" onclick={() => onDismiss(entry.id)}>Dismiss</button>{/if}
           {/if}
         </article>
       {/each}
