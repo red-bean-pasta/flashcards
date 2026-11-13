@@ -3,15 +3,23 @@ import { createHash, webcrypto } from 'node:crypto';
 import { test } from 'node:test';
 import { createOneDriveAuth, OneDriveAuthError } from '../src/lib/onedrive/auth.ts';
 
-function setup() {
-  const values = new Map<string, string>();
+function memoryStorage(values: Map<string, string>) {
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+}
+
+function setup(values = new Map<string, string>()) {
+  const pending = new Map<string, string>();
   let time = 1_000_000;
   const calls: Array<{ url: string; body: URLSearchParams }> = [];
   let transport: typeof fetch = async () => Response.json({ access_token: 'access', refresh_token: 'refresh', token_type: 'Bearer', expires_in: 3600 });
   let navigation = '';
   const location = { href: 'https://cards.example/app', assign(url: string | URL) { navigation = String(url); } };
   const auth = createOneDriveAuth({ clientId: 'test-client', redirectUri: 'https://cards.example/app' }, {
-    storage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); } },
+    storage: memoryStorage(values), sessionStorage: memoryStorage(pending),
     location, history: { replaceState(_data, _unused, url) { location.href = String(url); } },
     crypto: webcrypto as Crypto, now: () => time,
     fetch: async (url, init) => { calls.push({ url: String(url), body: new URLSearchParams(init?.body as URLSearchParams) }); return transport(url, init); },
@@ -22,7 +30,7 @@ function setup() {
     location.href = `https://cards.example/app?code=one-use-code&state=${params.get('state')}&session_state=opaque`;
     return params;
   }
-  return { auth, values, location, calls, callback, navigate: () => navigation, advance: (ms: number) => { time += ms; },
+  return { auth, values, pending, location, calls, callback, navigate: () => navigation, advance: (ms: number) => { time += ms; },
     transport: (fn: typeof fetch) => { transport = fn; } };
 }
 
@@ -42,7 +50,7 @@ test('personal-account sign-in uses S256 PKCE, state, delegated scopes and persi
   assert.equal(await s.auth.getAccessToken(), 'access');
   assert.equal(s.calls.length, 1);
   assert.equal(s.auth.isConnected(), true);
-  assert.ok([...s.values.keys()].every(key => !key.endsWith('pending')));
+  assert.equal(s.pending.size, 0);
   assert.equal(await s.auth.completeSignIn(), false);
   s.auth.disconnect();
   assert.equal(s.values.size, 0);
@@ -54,7 +62,7 @@ test('rejects missing, mismatched and expired state before exchanging a code', a
   for (const mode of ['missing', 'mismatched', 'expired']) {
     const s = setup();
     await s.callback();
-    if (mode === 'missing') s.values.clear();
+    if (mode === 'missing') s.pending.clear();
     if (mode === 'mismatched') s.location.href = 'https://cards.example/app?code=attacker-code&state=wrong';
     if (mode === 'expired') s.advance(11 * 60_000);
     await assert.rejects(s.auth.completeSignIn(), error => error instanceof OneDriveAuthError && error.reconnectRequired);
@@ -146,6 +154,37 @@ test('a callback cannot be replayed after its one-use pending state is consumed'
   await s.auth.completeSignIn();
   s.location.href = original;
   await assert.rejects(s.auth.completeSignIn(), error => error instanceof OneDriveAuthError && error.reconnectRequired);
+  assert.equal(s.calls.length, 1);
+});
+
+test('overlapping sign-ins keep their PKCE state in their own tabs', async () => {
+  const shared = new Map<string, string>();
+  const first = setup(shared);
+  const second = setup(shared);
+  const firstParams = await first.callback();
+  const secondParams = await second.callback();
+  assert.equal(shared.size, 0);
+  assert.equal(await first.auth.completeSignIn(), true);
+  assert.equal(await second.auth.completeSignIn(), true);
+  for (const [tab, params] of [[first, firstParams], [second, secondParams]] as const) {
+    const verifier = tab.calls[0].body.get('code_verifier')!;
+    assert.equal(createHash('sha256').update(verifier).digest('base64url'), params.get('code_challenge'));
+    assert.equal(tab.pending.size, 0);
+  }
+  assert.equal(setup(shared).auth.isConnected(), true);
+});
+
+test('a dropped code exchange requires fresh sign-in and consumes the callback', async () => {
+  const s = setup();
+  await s.callback();
+  const callbackUrl = s.location.href;
+  s.transport(async () => { throw new TypeError('offline'); });
+  await assert.rejects(s.auth.completeSignIn(), error => error instanceof OneDriveAuthError
+    && error.reconnectRequired && error.cause instanceof OneDriveAuthError && error.cause.code === 'network');
+  assert.equal(s.location.href, 'https://cards.example/app');
+  assert.equal(s.pending.size, 0);
+  s.location.href = callbackUrl;
+  await assert.rejects(s.auth.completeSignIn(), /state is missing/);
   assert.equal(s.calls.length, 1);
 });
 

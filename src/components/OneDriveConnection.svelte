@@ -9,12 +9,12 @@
   import { DeckRequestError } from '../lib/deck-client';
   import type { DeckBackend } from '../lib/deck-backend';
   import { clampPanelWidth, panelWidthBounds } from '../lib/panel-width';
-  import { isNetworkFailure, requiresReconnect } from '../lib/mutation-retry';
+  import { connectionRetryDeadline, requiresReconnect } from '../lib/mutation-retry';
 
-  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, viewportWidth, viewportHeight, active = 'local', canSwitch = true }: {
+  let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, viewportWidth, viewportHeight, canSwitch = true }: {
     onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
     pickerWidth: number; viewportWidth: number; viewportHeight: number; onPickerWidth: (width: number) => void; onPickerResizing: (resizing: boolean) => void;
-    active?: 'local' | 'onedrive'; canSwitch?: boolean;
+    canSwitch?: boolean;
   } = $props();
   const clientId = import.meta.env.VITE_ONEDRIVE_CLIENT_ID as string | undefined;
   let auth = $state<OneDriveAuth | undefined>();
@@ -22,20 +22,18 @@
   let connection: FolderConnection | undefined;
   // Controller snapshots are replaced as a whole; keep backend identity intact.
   let selected = $state.raw<ConnectedFolder | null>(null);
-  const folder = $derived(selected?.folder);
   let busy = $state(false);
-  let actionError = $state('');
-  let lastFailure = $state<unknown | null>(null);
-  let retryingConnection = $state(false);
+  let actionError = $state<Error | null>(null);
+  let retryNotBefore = $state<number | null>(null);
   let connectTimer: ReturnType<typeof setTimeout> | undefined;
   let connectAttempts = 0;
   const previewParams = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
   const previewError = previewParams?.get('preview') === 'error'
     ? previewParams.get('error_message') ?? 'Could not connect to OneDrive. Please check your connection and try again.'
     : null;
-  const displayedError = $derived(previewError ?? actionError);
-  const reconnectNeeded = $derived(previewError !== null || (lastFailure !== null && requiresReconnect(lastFailure)));
-  const networkFailure = $derived(lastFailure !== null && isNetworkFailure(lastFailure));
+  const displayedError = $derived(previewError ?? actionError?.message);
+  const reconnectNeeded = $derived(previewError !== null || (actionError !== null && requiresReconnect(actionError)));
+  const retryDeferred = $derived(retryNotBefore !== null && retryNotBefore > Date.now());
   let redirecting = false;
   let pickerOpen = $state(false);
   const pickerBounds = $derived(viewportWidth > 0 && viewportHeight > 0 ? panelWidthBounds({ width: viewportWidth, height: viewportHeight }) : null);
@@ -99,6 +97,7 @@
   function pickerFailure(id: number, failure: unknown) {
     if (destroyed || !pickerSlots.some(slot => slot.id === id)) return;
     if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
+    const wasOpen = pickerOpen;
     removePicker(id);
     if (candidateId === id) { candidateId = undefined; candidateReady = false; pickerStarting = false; clearReadyTimer(); }
     if (activePickerId === id) {
@@ -106,10 +105,7 @@
       candidateId = undefined; candidateReady = false; pickerStarting = false; clearReadyTimer();
       activePickerId = null; pickerMounted = false; closePicker();
     }
-    if (pickerOpen) {
-      lastFailure = failure;
-      actionError = failure.message;
-    }
+    if (wasOpen) actionError = failure;
     schedulePickerRefresh();
   }
 
@@ -144,48 +140,39 @@
   function clearConnectRetry() {
     if (connectTimer !== undefined) clearTimeout(connectTimer);
     connectTimer = undefined;
-    retryingConnection = false;
+    retryNotBefore = null;
   }
 
-  function scheduleConnectRetry() {
+  function scheduleConnectRetry(notBefore: number, now: number) {
     clearConnectRetry();
     if (destroyed) return;
     const delay = connectAttempts < 3 ? [1000, 2000, 4000][connectAttempts] : 10_000;
     connectAttempts++;
-    retryingConnection = true;
-    connectTimer = setTimeout(() => {
-      connectTimer = undefined;
-      if (!destroyed && !selected) void run(connect, 'connecting');
-    }, delay);
+    retryNotBefore = notBefore;
+    const retryAt = Math.max(now + delay, notBefore);
+    function waitForRetry() {
+      const remaining = retryAt - Date.now();
+      if (remaining > 0) connectTimer = setTimeout(waitForRetry, Math.min(remaining, 2_147_483_647));
+      else void run(restoreConnection, 'connecting');
+    }
+    waitForRetry();
   }
 
   function retryConnection() {
+    if (retryNotBefore === null || Date.now() < retryNotBefore) return;
     connectAttempts = 0;
-    clearConnectRetry();
-    void run(connect, 'connecting');
-  }
-
-  function handleOnline() {
-    if (!selected && (networkFailure || connectTimer !== undefined) && lastProvider() === 'onedrive') {
-      retryConnection();
-    }
+    void run(restoreConnection, 'connecting');
   }
 
   async function run(operation: () => Promise<void>, activity: 'connecting' | 'working' = 'working') {
     if (busy) return;
     busy = true;
     onActivity(activity);
-    actionError = '';
-    lastFailure = null;
-    clearConnectRetry();
+    clearActionError();
     try { await operation(); }
     catch (failure) {
       if (!(failure instanceof OneDriveAuthError || failure instanceof GraphError || failure instanceof DeckRequestError)) throw failure;
-      lastFailure = failure;
-      actionError = failure.message;
-      if (activity === 'connecting' && isNetworkFailure(failure)) {
-        scheduleConnectRetry();
-      }
+      actionError = failure;
     } finally { busy = false; if (!redirecting) onActivity(null); }
   }
 
@@ -268,28 +255,36 @@
     if (pickerOpen) { closePicker(); return; }
     cancelPickerRefresh();
     pickerTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    actionError = '';
+    clearActionError();
     pickerOpen = true;
     onPickerChange(true);
     await preparePicker();
   }
 
-  async function connect() {
+  async function restoreConnection() {
     if (!auth || !clientId) throw new Error('OneDrive authentication was not initialized.');
-    if (!auth.isConnected()) { await auth.startSignIn(); return; }
     graph = createGraphClient(() => auth!.getAccessToken());
     connection = createFolderConnection(graph, createFolderMemory(clientId, () => localStorage), applySelection);
-    await connection.restore();
+    try { await connection.restore(); }
+    catch (failure) {
+      const now = Date.now();
+      const notBefore = connectionRetryDeadline(failure, now);
+      if (notBefore !== null) scheduleConnectRetry(notBefore, now);
+      throw failure;
+    }
     connectAttempts = 0;
-    lastFailure = null;
-    actionError = '';
     void preparePicker();
   }
 
   export async function startConnection() {
-    if (!clientId) { actionError = "OneDrive isn’t configured for this site."; return; }
-    if (selected) { actionError = ''; onBackend(selected.backend, selected.folder.name); return; }
-    await run(connect, 'connecting');
+    if (!clientId) { actionError = new DeckRequestError("OneDrive isn’t configured for this site."); return; }
+    if (selected) { clearActionError(); onBackend(selected.backend, selected.folder.name); return; }
+    if (retryNotBefore !== null && Date.now() < retryNotBefore) return;
+    await run(async () => {
+      if (!auth) throw new Error('OneDrive authentication was not initialized.');
+      if (auth.isConnected()) await restoreConnection();
+      else await auth.startSignIn();
+    }, 'connecting');
   }
 
   export function reconnect() {
@@ -298,21 +293,20 @@
   }
 
   export function clearActionError() {
-    actionError = '';
-    lastFailure = null;
+    actionError = null;
     clearConnectRetry();
   }
 
   onMount(() => {
     if (!clientId) { onActivity(null); return; }
-    window.addEventListener('online', handleOnline);
+    window.addEventListener('online', retryConnection);
     const restoring = lastProvider() === 'onedrive' || new URLSearchParams(location.search).has('code') || new URLSearchParams(location.search).has('error');
     void run(async () => {
       auth = createOneDriveAuth({ clientId, redirectUri: new URL(import.meta.env.BASE_URL, location.origin).href });
       const returned = await auth!.completeSignIn();
-      if (returned) { sessionStorage.removeItem('flashcards.restore.attempted'); await connect(); }
+      if (returned) { sessionStorage.removeItem('flashcards.restore.attempted'); await restoreConnection(); }
       else if (lastProvider() === 'onedrive') {
-        if (auth!.isConnected()) await connect();
+        if (auth!.isConnected()) await restoreConnection();
         else if (!sessionStorage.getItem('flashcards.restore.attempted')) {
           sessionStorage.setItem('flashcards.restore.attempted', '1');
           redirecting = true;
@@ -323,7 +317,7 @@
     }, restoring ? 'connecting' : 'working');
     return () => {
       destroyed = true;
-      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('online', retryConnection);
       clearConnectRetry();
       cancelPickerRefresh();
       clearReadyTimer();
@@ -338,11 +332,11 @@
     <p role="alert" class="save-error">
       {displayedError}
       {#if reconnectNeeded}
-        {#if auth || previewError !== null}{' '}<button class="error-action" disabled={!auth || busy || !canSwitch} onclick={() => run(() => auth!.startSignIn())}>Reconnect OneDrive</button>.{/if}
-      {:else if networkFailure}
-        {#if retryingConnection}{' '}Retrying…{/if}{' '}<button class="error-action" disabled={busy || !canSwitch} onclick={retryConnection}>Retry</button>.
+        {#if auth || previewError !== null}{' '}<button class="error-action" disabled={!auth || busy || !canSwitch} onclick={reconnect}>Reconnect OneDrive</button>.{/if}
+      {:else if retryNotBefore !== null}
+        {' '}Retrying…{' '}<button class="error-action" disabled={busy || !canSwitch || retryDeferred} onclick={retryConnection}>Retry</button>.
       {/if}
-      {#if graph && !reconnectNeeded}{' '}<button class="error-action" disabled={busy || !canSwitch} onclick={openPicker}>Choose an existing folder</button>.{/if}
+      {#if graph && !reconnectNeeded}{' '}<button class="error-action" disabled={busy || !canSwitch || retryDeferred} onclick={openPicker}>Choose an existing folder</button>.{/if}
     </p>
   {/if}
 </aside>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { retryDecision, isNetworkFailure, requiresReconnect } from '../src/lib/mutation-retry.ts';
+import { retryDecision, connectionRetryDeadline, requiresReconnect } from '../src/lib/mutation-retry.ts';
 import { DeckRequestError, RetryableLocalConflict } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
 import { OneDriveAuthError } from '../src/lib/onedrive/auth.ts';
@@ -47,18 +47,32 @@ test('an aggregate of external network failures remains retryable', () => {
   assert.deepEqual(retryDecision(failure, 0, 1000, 0), { kind: 'retry', notBefore: 3000 });
 });
 
-test('isNetworkFailure identifies transient network errors and excludes auth or defects', () => {
-  assert.equal(isNetworkFailure(new GraphError('offline', { status: 0, code: 'networkError' })), true);
-  assert.equal(isNetworkFailure(new OneDriveAuthError('offline', 'network')), true);
-  assert.equal(isNetworkFailure(new DOMException('Network unavailable', 'NetworkError')), true);
-  assert.equal(isNetworkFailure(new DeckRequestError('Wrapped', { cause: new GraphError('offline', { status: 0, code: 'networkError' }) })), true);
-
-  // Auth / reconnect required
-  assert.equal(isNetworkFailure(new OneDriveAuthError('expired', 'reconnect_required')), false);
-  assert.equal(isNetworkFailure(new GraphError('expired', { status: 401, code: 'auth' })), false);
-  assert.equal(requiresReconnect(new GraphError('expired', { status: 401, code: 'auth' })), true);
-
-  // Defect / other errors
-  assert.equal(isNetworkFailure(new Error('bug')), false);
-  assert.equal(isNetworkFailure(new AggregateError([new GraphError('offline', { status: 0, code: 'networkError' }), new Error('bug')])), false);
+test('connection retries distinguish transport failures from invalid responses and honor service deadlines', () => {
+  const now = 1000;
+  for (const error of [
+    new GraphError('offline', { status: 0, code: 'networkError' }),
+    new OneDriveAuthError('offline', 'network'),
+    new DOMException('Network unavailable', 'NetworkError'),
+    new DeckRequestError('Wrapped', { cause: new GraphError('offline', { status: 0, code: 'networkError' }) }),
+  ]) {
+    assert.equal(connectionRetryDeadline(error, now), now);
+  }
+  for (const status of [429, 503]) {
+    assert.equal(connectionRetryDeadline(new GraphError('busy', { status, code: 'busy', retryAfter: '30' }), now), now + 30_000);
+  }
+  const offline = new GraphError('offline', { status: 0, code: 'networkError' });
+  const invalid = new GraphError('invalid response', { status: 0, code: 'invalidResponse' });
+  const expired = new GraphError('expired', { status: 401, code: 'auth' });
+  assert.equal(requiresReconnect(expired), true);
+  for (const error of [
+    invalid,
+    expired,
+    new OneDriveAuthError('expired', 'reconnect_required', { cause: offline }),
+    new GraphError('bad deadline', { status: 429, code: 'throttled', retryAfter: 'later' }),
+    new Error('bug'),
+    new AggregateError([offline, invalid]),
+    new AggregateError([offline, new Error('bug')]),
+  ]) {
+    assert.equal(connectionRetryDeadline(error, now), null);
+  }
 });

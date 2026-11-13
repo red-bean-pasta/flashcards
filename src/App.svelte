@@ -52,8 +52,6 @@
     status: !matchedIds.includes(item.id) ? 'disconnected' as const : item.review ? 'needs-review' as const : activeId === item.id ? queueActivity ?? 'applying' : item.retryAt ? 'waiting' as const : 'queued' as const,
     error: item.error, retryAt: item.retryAt, canDismiss: matchedIds.includes(item.id) && !activeId, canReview: matchedIds.includes(item.id) && !activeId && !item.retryBlocked,
     reconnect: item.reconnect,
-    source: item.operation.source, stage: item.stage, sourceBefore: item.sourceWrite?.before, sourceAfter: item.sourceWrite?.after,
-    archiveBefore: item.archiveWrite?.before, archiveAfter: item.archiveWrite?.after,
   })), ...history.filter(entry => !pendingItems.some(item => item.id === entry.id))].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
   let loading = $state(true);
   let storageActivity = $state<'connecting' | 'working' | null>(lastProvider() === 'onedrive' || new URLSearchParams(window.location.search).has('code') || new URLSearchParams(window.location.search).has('error') ? 'connecting' : null);
@@ -96,8 +94,8 @@
     viewportWidth = viewport.width;
     viewportHeight = viewport.height;
   }
-  function resizeAdd(clientX: number) {
-    addWidth = clampPanelWidth(viewportWidth - clientX, { width: viewportWidth, height: viewportHeight });
+  function resizeAdd(width: number) {
+    addWidth = clampPanelWidth(width, { width: viewportWidth, height: viewportHeight });
   }
 
   let backend = $state.raw<DeckBackend | undefined>();
@@ -417,7 +415,7 @@
       </main>
 
       <footer class="practice-footer">
-        <OneDriveConnection bind:this={oneDrive} active={provider === 'onedrive' ? 'onedrive' : 'local'}
+        <OneDriveConnection bind:this={oneDrive}
           onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
           onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
           {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
@@ -444,7 +442,7 @@
   </div>
 
   {#if dialogAction === 'history'}
-    <HistoryPanel history={historyEntries} problem={queueProblem} addWidth={viewportWidth ? addWidth / viewportWidth * 100 : 0} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
+    <HistoryPanel history={historyEntries} problem={queueProblem} {addWidth} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
       void queue.reviewAgain(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     }} onDismiss={id => {
       if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
@@ -458,7 +456,7 @@
         draft={action === 'add' ? addDraft : editDrafts[cardId!]}
         onDraft={draft => { if (action === 'add') addDraft = draft; else editDrafts[cardId!] = draft; }}
         onSaved={() => { if (action === 'add') addDraft = undefined; else delete editDrafts[cardId!]; }}
-        onSubmit={saveCard} {pickerOpen} addWidth={viewportWidth ? addWidth / viewportWidth * 100 : 0} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { if (dialogAction === action && (action === 'add' || current?.id === cardId)) closeCardPanel(); }} />
+        onSubmit={saveCard} {pickerOpen} {addWidth} {panelBounds} {viewportWidth} onResizeAdd={resizeAdd} onAddResizing={value => { addResizing = value; }} allOccurrences={true} onClose={() => { if (dialogAction === action && (action === 'add' || current?.id === cardId)) closeCardPanel(); }} />
     {/key}
   {/if}
   {#if removeOpen}

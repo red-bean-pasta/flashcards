@@ -45,7 +45,7 @@ export async function scanOneDriveFolder(graph: GraphClient, root: GraphItem, bu
   }
   collect(root.id, '');
   const archive = findArchive(listings, root.id);
-  return { sources, archive, folders: listings.size };
+  return { sources, archive };
 }
 
 function findArchive(listings: Map<string, GraphItem[]>, rootId: string): GraphItem | undefined {

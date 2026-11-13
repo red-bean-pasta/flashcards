@@ -10,7 +10,7 @@
 
   let { action, card, deck, selectedSource, onSubmit, onClose, pickerOpen, addWidth, panelBounds, viewportWidth, onResizeAdd, onAddResizing, allOccurrences = false, draft, onDraft, onSaved }: {
     action: 'add' | 'edit' | 'remove'; card: Card | undefined; deck: DeckState; selectedSource: string;
-    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; pickerOpen: boolean; addWidth: number; panelBounds: { min: number; max: number } | null; viewportWidth: number; onResizeAdd: (clientX: number) => void; onAddResizing: (value: boolean) => void; allOccurrences?: boolean; draft?: { question: string; answer: string; fileInput: string; chosenSource: string }; onDraft?: (draft: { question: string; answer: string; fileInput: string; chosenSource: string }) => void; onSaved?: () => void;
+    onSubmit: (request: MutationRequest) => Promise<void>; onClose: () => void; pickerOpen: boolean; addWidth: number; panelBounds: { min: number; max: number } | null; viewportWidth: number; onResizeAdd: (width: number) => void; onAddResizing: (value: boolean) => void; allOccurrences?: boolean; draft?: { question: string; answer: string; fileInput: string; chosenSource: string }; onDraft?: (draft: { question: string; answer: string; fileInput: string; chosenSource: string }) => void; onSaved?: () => void;
   } = $props();
   // The current practice card may disappear while an asynchronous Remove
   // completes. The dialog owns the card snapshot it was opened for.
@@ -105,11 +105,11 @@
 {#if action !== 'remove'}
   <aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="card-dialog-title">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: Keyboard-accessible window splitter. -->
-    <div class="add-panel-resize" role="separator" tabindex="0" aria-label={action === 'add' ? 'Resize add panel' : 'Resize edit panel'} aria-orientation="vertical" aria-valuemin={panelBounds ? Math.round(panelBounds.min / viewportWidth * 100) : 0} aria-valuemax={panelBounds ? Math.round(panelBounds.max / viewportWidth * 100) : 0} aria-valuenow={Math.round(addWidth)}
-      onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(event.clientX); } }}
-      onpointermove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) onResizeAdd(event.clientX); }}
+    <div class="add-panel-resize" role="separator" tabindex="0" aria-label={action === 'add' ? 'Resize add panel' : 'Resize edit panel'} aria-orientation="vertical" aria-valuemin={panelBounds ? Math.round(panelBounds.min) : 0} aria-valuemax={panelBounds ? Math.round(panelBounds.max) : 0} aria-valuenow={Math.round(addWidth)} aria-valuetext={`${Math.round(addWidth)} pixels`}
+      onpointerdown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); onAddResizing(true); onResizeAdd(viewportWidth - event.clientX); } }}
+      onpointermove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) onResizeAdd(viewportWidth - event.clientX); }}
       onlostpointercapture={() => onAddResizing(false)}
-      onkeydown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); onResizeAdd(window.innerWidth * (1 - (addWidth + (event.key === 'ArrowLeft' ? 2 : -2)) / 100)); } }}></div>
+      onkeydown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); onResizeAdd(addWidth + (event.key === 'ArrowLeft' ? 1 : -1) * viewportWidth * .02); } }}></div>
     <div class="add-panel-content">{@render cardForm()}</div>
   </aside>
 {:else}

@@ -53,6 +53,6 @@ export async function readOneDriveFiles(graph: GraphClient, cache: SnapshotCache
   signal?.throwIfAborted();
   return prepared.map(entry => {
     if (!entry.snapshot) throw new Error('Accepted file snapshot is missing.');
-    return { source: entry.source, snapshot: entry.snapshot, hit: entry.hit };
+    return { source: entry.source, snapshot: entry.snapshot };
   });
 }

@@ -10,10 +10,4 @@ export interface HistoryEntry {
   canDismiss?: boolean;
   canReview?: boolean;
   reconnect?: boolean;
-  source?: string;
-  stage?: string;
-  sourceBefore?: string | null;
-  sourceAfter?: string;
-  archiveBefore?: string | null;
-  archiveAfter?: string;
 }

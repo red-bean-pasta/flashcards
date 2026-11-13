@@ -20,6 +20,7 @@ export interface OneDriveAuthConfig { clientId: string; redirectUri: string }
 export interface OneDriveAuthDependencies {
   fetch?: typeof fetch;
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  sessionStorage?: OneDriveAuthDependencies['storage'];
   crypto?: Crypto;
   location?: Pick<Location, 'href' | 'assign'>;
   history?: Pick<History, 'replaceState'>;
@@ -74,25 +75,26 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
   let refreshing: Promise<string> | undefined;
   let tokenQueue: Promise<void> = Promise.resolve();
 
-  // Browser localStorage is used by default; dependency injection is for tests.
-  function storageOperation<T>(operation: (storage: NonNullable<OneDriveAuthDependencies['storage']>) => T): T {
-    try { return operation(dependencies.storage ?? window.localStorage); }
+  function storageOperation<T>(key: string, operation: (storage: NonNullable<OneDriveAuthDependencies['storage']>) => T): T {
+    const pending = key === 'pending';
+    try { return operation(pending ? dependencies.sessionStorage ?? window.sessionStorage : dependencies.storage ?? window.localStorage); }
     catch (cause) {
       if (!(cause instanceof DOMException) || !['SecurityError', 'QuotaExceededError', 'InvalidStateError'].includes(cause.name)) throw cause;
-      throw new OneDriveAuthError('Browser local storage is unavailable. Allow local storage to connect OneDrive.', 'storage', { cause });
+      const name = pending ? 'session storage' : 'local storage';
+      throw new OneDriveAuthError(`Browser ${name} is unavailable. Allow ${name} to connect OneDrive.`, 'storage', { cause });
     }
   }
   function readStored<T>(key: string, validate: (value: unknown) => value is T): T | undefined {
-    const text = storageOperation(storage => storage.getItem(prefix + key));
+    const text = storageOperation(key, storage => storage.getItem(prefix + key));
     if (text === null) return undefined;
     const value = readJson(text);
     if (!validate(value)) throw new OneDriveAuthError('Stored OneDrive session has an invalid format. Disconnect and reconnect OneDrive.', 'storage');
     return value;
   }
   function saveStored(key: string, value: unknown) {
-    storageOperation(storage => storage.setItem(prefix + key, JSON.stringify(value)));
+    storageOperation(key, storage => storage.setItem(prefix + key, JSON.stringify(value)));
   }
-  function removeStored(key: string) { storageOperation(storage => storage.removeItem(prefix + key)); }
+  function removeStored(key: string) { storageOperation(key, storage => storage.removeItem(prefix + key)); }
   function disconnect() {
     generation++;
     refreshing = undefined;
@@ -179,7 +181,13 @@ export function createOneDriveAuth(config: OneDriveAuthConfig, dependencies: One
     const code = query.get('code');
     if (!code) throw new OneDriveAuthError('Microsoft did not return an authorization code.', 'oauth');
     const expected = generation;
-    const tokens = await fetchToken({ grant_type: 'authorization_code', code, code_verifier: pending.verifier });
+    let tokens: Tokens;
+    try { tokens = await fetchToken({ grant_type: 'authorization_code', code, code_verifier: pending.verifier }); }
+    catch (cause) {
+      // The server may have redeemed the single-use code before the connection dropped.
+      if (!(cause instanceof OneDriveAuthError) || cause.code !== 'network') throw cause;
+      throw new OneDriveAuthError('The connection dropped while completing Microsoft sign-in. Check your connection and sign in again.', 'reconnect_required', { cause });
+    }
     assertCurrent(expected);
     removeStored('pickerTokens');
     saveStored('tokens', tokens);
