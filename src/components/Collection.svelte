@@ -1,105 +1,160 @@
 <script lang="ts">
   import { sourceLabel } from '../lib/source-names';
-  import { buildMaterialTree, type MaterialFolder } from '../lib/material-tree';
+  import { buildMaterialTree, findAncestorFolders, type MaterialFolder } from '../lib/material-tree';
+  import { formatPathSpec } from '../lib/path-spec';
+  import { bannerSlideTransition } from '../lib/panel-transition';
 
-  let { files, total, available, source = $bindable(), onChange }: {
+  let { files, total, available, source = $bindable(), disabled = false, rootName = '', onChange }: {
     files: string[]; total: number; available: number;
-    source: string; onChange: () => void;
+    source: string; disabled?: boolean; rootName?: string; onChange: () => void;
   } = $props();
 
   const tree = $derived(buildMaterialTree(files));
   let isOpen = $state(false);
-  let openLevels = $state<Array<{ folder: MaterialFolder; rect: DOMRect }>>([]);
-  let container = $state<HTMLElement | null>(null);
+  let openFolders = $state<MaterialFolder[]>([]);
+  let heights = $state<number[]>([]);
+  let labelEl = $state<HTMLElement>();
+  let bannerBottomPadding = $state(25);
 
-  function hoverFolder(subfolder: MaterialFolder, el: HTMLElement, depth: number) {
-    if (openLevels[depth]?.folder.path === subfolder.path) return;
-    openLevels = [...openLevels.slice(0, depth), { folder: subfolder, rect: el.getBoundingClientRect() }];
+  function updateAlignment() {
+    if (!labelEl) return;
+    const labelRect = labelEl.getBoundingClientRect();
+    const practiceCenterY = labelRect.top + labelRect.height / 2;
+    const centerFromBottom = window.innerHeight - practiceCenterY;
+    const itemHeight = labelRect.height;
+    bannerBottomPadding = Math.max(12, Math.round(centerFromBottom - itemHeight / 2));
+  }
+
+  function toggleOpen() {
+    if (disabled) return;
+    isOpen = !isOpen;
+    if (isOpen) {
+      updateAlignment();
+      openFolders = findAncestorFolders(tree, source);
+    }
   }
 
   function chooseSource(target: string) {
-    source = target;
+    const isUnchanged = source === target;
     isOpen = false;
-    openLevels = [];
-    onChange();
+    if (!isUnchanged) {
+      source = target;
+      onChange();
+    }
   }
 
-  function onPointerDown(e: PointerEvent) {
-    if (!isOpen) return;
-    const t = e.target as Element;
-    if (!container?.contains(t) && !t.closest?.('.secondary-pane')) {
-      isOpen = false;
-      openLevels = [];
+  function measureBanner(node: HTMLElement, depth: number) {
+    heights[depth] = node.offsetHeight;
+    const observer = new ResizeObserver(() => { heights[depth] = node.offsetHeight; });
+    observer.observe(node);
+    return {
+      update(d: number) { depth = d; heights[depth] = node.offsetHeight; },
+      destroy() { observer.disconnect(); }
+    };
+  }
+
+  const eatenMargin = $derived(Math.round(bannerBottomPadding / 2));
+
+  function getBannerHeight(depth: number): number {
+    return heights[depth] || (labelEl ? labelEl.offsetHeight + 2 * bannerBottomPadding : 80);
+  }
+
+  function getBottomOffset(depth: number, totalBanners: number): number {
+    let offset = 0;
+    for (let j = depth + 1; j < totalBanners; j++) {
+      offset += Math.max(0, getBannerHeight(j) - eatenMargin);
     }
+    return offset;
+  }
+
+  const totalStackDistance = $derived(
+    openFolders.length ? getBottomOffset(0, openFolders.length) + getBannerHeight(0) : 0
+  );
+
+  const savedOffsets: number[] = [];
+
+  function getBannerOffset(depth: number): number {
+    if (depth < openFolders.length) {
+      const offset = getBottomOffset(depth, openFolders.length);
+      savedOffsets[depth] = offset;
+      return offset;
+    }
+    return savedOffsets[depth] ?? 0;
+  }
+
+  function getBannerSlideDistance(depth: number): number {
+    if (!isOpen) return totalStackDistance;
+    if (depth >= openFolders.length) {
+      const exitDepth = openFolders.length;
+      const baseOffset = savedOffsets[exitDepth] ?? 0;
+      return baseOffset + getBannerHeight(exitDepth);
+    }
+    return getBottomOffset(depth, openFolders.length) + getBannerHeight(depth);
+  }
+
+  function handleBannerPointerDown(e: PointerEvent, depth: number) {
+    if ((e.target as HTMLElement | null)?.closest('button')) return;
+    if (depth < openFolders.length - 1) openFolders = openFolders.slice(0, depth + 1);
+  }
+
+  function onWindowPointerDown(e: PointerEvent) {
+    if (!isOpen) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.material-banner') || target?.closest('#source-trigger')) return;
+    isOpen = false;
   }
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape' && isOpen) {
-      if (openLevels.length) openLevels = openLevels.slice(0, -1);
-      else isOpen = false;
+      isOpen = false;
     }
-  }
-
-  function positionPane(node: HTMLElement, anchor: DOMRect) {
-    const r = node.getBoundingClientRect();
-    const left = anchor.right + 2 + r.width > window.innerWidth ? anchor.left - r.width - 2 : anchor.right + 2;
-    const top = Math.max(8, Math.min(anchor.top, window.innerHeight - r.height - 8));
-    node.style.cssText = `position:fixed;left:${Math.max(8, left)}px;top:${top}px;`;
   }
 </script>
 
-<svelte:window onpointerdown={onPointerDown} onkeydown={onKeyDown} />
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeyDown} onresize={updateAlignment} />
 
-<aside class="collection" aria-label="Collection">
-  <div class="source-select" bind:this={container}>
-    <label for="source-trigger">Practice from</label>
-    <div class="source-choice-anchor">
-      <button id="source-trigger" type="button" class="source-choice-button" aria-haspopup="menu" aria-expanded={isOpen}
-        onclick={() => { isOpen = !isOpen; if (isOpen) openLevels = []; }}>
-        <span class="source-choice-label">{source ? sourceLabel(source) : 'All materials'}</span>
-        <span class="source-choice-arrow" aria-hidden="true">⌄</span>
-      </button>
-
-      {#if isOpen}
-        <div class="material-menu-pane root-pane" role="menu" tabindex="-1">
-          {@render paneItems(tree, 0)}
-        </div>
-      {/if}
+{#if !disabled}
+  <aside class="collection" aria-label="Collection">
+    <div class="source-select">
+      <label for="source-trigger" bind:this={labelEl}>Practice from</label>
+      <div class="source-choice-anchor">
+        <button id="source-trigger" type="button" class="source-choice-button" aria-haspopup="dialog"
+          aria-expanded={isOpen} onclick={toggleOpen}>
+          <span class="source-choice-label">{source ? sourceLabel(source) : 'All materials'}</span>
+          <span class="source-choice-arrow" aria-hidden="true">⌄</span>
+        </button>
+      </div>
     </div>
-  </div>
-  <span class="collection-count">{source ? `${available} / ${total}` : total} cards</span>
-</aside>
-
-{#if isOpen}
-  {#each openLevels as level, index (level.folder.path)}
-    <div class="material-menu-pane secondary-pane" role="menu" tabindex="-1" use:positionPane={level.rect}>
-      {@render paneItems(level.folder, index + 1)}
-    </div>
-  {/each}
+    <span class="collection-count">{source ? `${available} / ${total}` : total} cards</span>
+  </aside>
 {/if}
 
-{#snippet paneItems(folder: MaterialFolder, depth: number)}
-  <div class="menu-items-scroll">
-    <button type="button" role="menuitem" class="material-menu-button" class:is-active={source === folder.path}
-      onpointerenter={() => { openLevels = openLevels.slice(0, depth); }} onclick={() => chooseSource(folder.path)}>
-      <span class="material-item-label">All materials</span>
-      {#if source === folder.path}<span class="material-item-check" aria-hidden="true">✓</span>{/if}
-    </button>
-    {#each folder.folders as sub (sub.path)}
-      <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openLevels[depth]?.folder.path === sub.path}
-        class="material-menu-button folder-button" class:is-open={openLevels[depth]?.folder.path === sub.path}
-        onpointerenter={e => hoverFolder(sub, e.currentTarget, depth)}
-        onclick={e => hoverFolder(sub, e.currentTarget, depth)}>
-        <span class="material-item-label">{sub.name}</span>
-        <span class="material-submenu-arrow" aria-hidden="true">›</span>
-      </button>
-    {/each}
-    {#each folder.files as file (file.path)}
-      <button type="button" role="menuitem" class="material-menu-button" class:is-active={source === file.path}
-        onpointerenter={() => { openLevels = openLevels.slice(0, depth); }} onclick={() => chooseSource(file.path)}>
-        <span class="material-item-label">{file.name}</span>
-        {#if source === file.path}<span class="material-item-check" aria-hidden="true">✓</span>{/if}
-      </button>
+{#if isOpen}
+  <div class="material-banner-stack">
+    {#each openFolders as folder, depth (depth)}
+      <aside class="material-banner" aria-label="Materials in {folder.name}"
+        style="bottom: {getBannerOffset(depth)}px; padding-top: {bannerBottomPadding}px; padding-bottom: {bannerBottomPadding}px; z-index: {40 + depth};"
+        use:measureBanner={depth} onpointerdown={e => handleBannerPointerDown(e, depth)}
+        transition:bannerSlideTransition|global={{
+          duration: 180,
+          distance: getBannerSlideDistance(depth)
+        }}>
+        <span class="material-banner-path" aria-hidden="true">{formatPathSpec(folder.path, rootName)}</span>
+        <div class="material-banner-scroll">
+          <div class="material-banner-items">
+            <button type="button" class="material-banner-item is-all-materials" class:is-selected={source === folder.path}
+              onclick={() => chooseSource(folder.path)}>All materials</button>
+            {#each folder.folders as sub (sub.path)}
+              <button type="button" class="material-banner-item is-folder"
+                onclick={() => { openFolders = [...openFolders.slice(0, depth + 1), sub]; }}>{sub.name}</button>
+            {/each}
+            {#each folder.files as file (file.path)}
+              <button type="button" class="material-banner-item" class:is-selected={source === file.path}
+                onclick={() => chooseSource(file.path)}>{file.name}</button>
+            {/each}
+          </div>
+        </div>
+      </aside>
     {/each}
   </div>
-{/snippet}
+{/if}

@@ -433,7 +433,8 @@
       <footer class="practice-footer">
         <div class="collection-footer">
           <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
-            bind:source={selectedSource} onChange={startRound} />
+            rootName={folderName}
+            bind:source={selectedSource} disabled={!backend || loading || storageBusy || blocked} onChange={startRound} />
           <nav class="card-actions" aria-label="Manage cards">
             {#if writeNotice}
               <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>

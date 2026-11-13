@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildMaterialTree } from '../src/lib/material-tree.ts';
+import { buildMaterialTree, findAncestorFolders } from '../src/lib/material-tree.ts';
 
 test('buildMaterialTree organizes files into sorted hierarchical folder and file nodes', () => {
   const files = ['A1.md', 'A2.md', 'B/B1.md', 'B/B2.md', 'B/BA1/deep.md', 'C/C1.md'];
@@ -42,3 +42,28 @@ test('buildMaterialTree handles empty file list and flat files without subfolder
   assert.deepEqual(flat.folders, []);
   assert.deepEqual(flat.files.map(f => f.name), ['Alpha', 'Zebra']);
 });
+
+test('findAncestorFolders resolves the branch hierarchy for selected files and folders', () => {
+  const tree = buildMaterialTree(['A1.md', 'B/B1.md', 'B/BA1/deep.md', 'C/C1.md']);
+
+  // File deep inside B/BA1
+  const deepAncestors = findAncestorFolders(tree, 'B/BA1/deep.md');
+  assert.deepEqual(deepAncestors.map(f => f.path), ['', 'B/', 'B/BA1/']);
+
+  // Folder B/BA1/
+  const folderAncestors = findAncestorFolders(tree, 'B/BA1/');
+  assert.deepEqual(folderAncestors.map(f => f.path), ['', 'B/', 'B/BA1/']);
+
+  // File directly in B/
+  const shallowAncestors = findAncestorFolders(tree, 'B/B1.md');
+  assert.deepEqual(shallowAncestors.map(f => f.path), ['', 'B/']);
+
+  // Root-level file
+  const rootFileAncestors = findAncestorFolders(tree, 'A1.md');
+  assert.deepEqual(rootFileAncestors.map(f => f.path), ['']);
+
+  // Empty source (All materials)
+  const emptyAncestors = findAncestorFolders(tree, '');
+  assert.deepEqual(emptyAncestors.map(f => f.path), ['']);
+});
+

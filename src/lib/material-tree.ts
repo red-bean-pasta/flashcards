@@ -54,3 +54,24 @@ export function buildMaterialTree(files: string[]): MaterialFolder {
   sortFolder(root);
   return root;
 }
+
+export function findAncestorFolders(root: MaterialFolder, source: string): MaterialFolder[] {
+  const result: MaterialFolder[] = [root];
+  if (!source) return result;
+
+  const parts = source.split('/');
+  const folderSegments = source.endsWith('/') ? parts.filter(Boolean) : parts.slice(0, -1);
+
+  let current = root;
+  let currentPath = '';
+  for (const segment of folderSegments) {
+    currentPath += `${segment}/`;
+    const next = current.folders.find(folder => folder.path === currentPath);
+    if (!next) break;
+    result.push(next);
+    current = next;
+  }
+
+  return result;
+}
+
