@@ -352,26 +352,26 @@
 
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40vh, 50vw)'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
-  {#if backend}
-    <aside class="storage-connection" aria-label="Card storage">
-      <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
-      {#if switchOpen}
-        <div class="storage-actions storage-switch" transition:fade={{ duration: 150 }}>
-          <span class="text-action">Switch storage to:</span>
-          <button class="text-action" onclick={() => chooseStorage('local')}>Local</button>
-          <button class="text-action" onclick={() => chooseStorage('onedrive')}>OneDrive</button>
-        </div>
-      {:else}
-        <div class="storage-actions" transition:fade={{ duration: 150 }}>
-          <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
-          <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} onclick={() => { closeCardPanel(); if (provider === 'local') void connectLocal(); else oneDrive.openPicker(); }}>{folderName}</button>
-        </div>
-      {/if}
-      </div>
-    </aside>
-  {/if}
   <div class="practice-scroll">
     <div class="practice-page">
+      {#if backend}
+        <aside class="storage-connection" aria-label="Card storage">
+          <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
+          {#if switchOpen}
+            <div class="storage-actions storage-switch" transition:fade={{ duration: 150 }}>
+              <span class="text-action">Switch storage to:</span>
+              <button class="text-action" onclick={() => chooseStorage('local')}>Local</button>
+              <button class="text-action" onclick={() => chooseStorage('onedrive')}>OneDrive</button>
+            </div>
+          {:else}
+            <div class="storage-actions" transition:fade={{ duration: 150 }}>
+              <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
+              <button class="text-action" disabled={loading || storageBusy || !!pendingWrites} onclick={() => { closeCardPanel(); if (provider === 'local') void connectLocal(); else oneDrive.openPicker(); }}>{folderName}</button>
+            </div>
+          {/if}
+          </div>
+        </aside>
+      {/if}
       <main class="practice" aria-label="Flashcard practice" aria-busy={loading || switchingOneDrive}>
         {#if switchingOneDrive}
           <section class="empty-prompt"><p role="status">Connecting…</p></section>
