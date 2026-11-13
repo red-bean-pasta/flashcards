@@ -350,6 +350,11 @@
 
 <div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40vh, 50vw)'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
+  <OneDriveConnection bind:this={oneDrive}
+    onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
+    onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
+    {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
+    onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   <div class="practice-scroll">
     <div class="practice-page">
       {#if backend}
@@ -415,11 +420,6 @@
       </main>
 
       <footer class="practice-footer">
-        <OneDriveConnection bind:this={oneDrive}
-          onBackend={(next, name) => setBackend(next, false, name, 'onedrive')}
-          onActivity={value => { storageActivity = value; }} onPickerChange={updatePickerOpen} {viewportWidth} {viewportHeight}
-          {pickerWidth} onPickerWidth={value => { pickerWidth = value; localStorage.setItem('onedrive-picker-width-px', String(value)); }}
-          onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
         <div class="collection-footer">
           <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
             bind:source={selectedSource} onChange={startRound} />

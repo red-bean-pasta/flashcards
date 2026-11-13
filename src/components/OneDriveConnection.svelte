@@ -344,16 +344,17 @@
 <style>
   .onedrive-status:not(.has-status) { display: none; }
   .onedrive-status.has-status {
-    width: 100%;
-    margin-bottom: 8px;
-    font-size: .78rem;
-    text-align: right;
-    overflow-wrap: anywhere;
+    position: absolute; z-index: 3;
+    right: max(30px, env(safe-area-inset-right));
+    bottom: max(65px, env(safe-area-inset-bottom));
+    max-width: calc(100% - 60px);
+    max-height: 40vh; overflow: auto;
+    font-size: .78rem; text-align: right; overflow-wrap: anywhere;
   }
   .onedrive-status p { margin: 0; }
   .error-action { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; }
   @media (max-width: 600px), (orientation: portrait) {
-    .onedrive-status.has-status { text-align: left; }
+    .onedrive-status.has-status { left: max(20px, env(safe-area-inset-left)); right: auto; text-align: left; }
   }
 
   .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: var(--picker-width); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
