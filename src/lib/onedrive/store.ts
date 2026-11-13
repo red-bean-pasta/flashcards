@@ -152,8 +152,8 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             }
             await advance({ stage: 'source-ready' }); return;
           }
-          await advance({ stage: 'archive-writing' });
           if (plan.id) await validateSourcePath(plan.name, plan.id);
+          await advance({ stage: 'archive-writing' });
           try {
             const saved = await publish(plan);
             await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
@@ -195,8 +195,8 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
             }
             await advance({ stage: 'releasing' }); break;
           }
-          await advance({ stage: 'source-writing' });
           if (plan.id) await validateSourcePath(plan.name, plan.id);
+          await advance({ stage: 'source-writing' });
           try {
             const saved = await publish(plan);
             await cache.put(plan.name, { id: saved.id, text: plan.after, revision: saved.eTag! });
