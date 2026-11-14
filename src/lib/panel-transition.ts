@@ -15,10 +15,17 @@ export function bannerSlideTransition(
   if (distance !== undefined && (!Number.isFinite(distance) || distance < 0)) {
     throw new Error(`Invalid banner slide distance: ${distance}`);
   }
-  const el = node as HTMLElement;
-  const bottom = parseFloat(el.style.bottom) || 0;
-  const height = el.offsetHeight || 75;
-  const travel = distance ?? (bottom + height);
+  let travel = distance;
+  if (travel === undefined) {
+    const el = node as HTMLElement;
+    const inlineVar = el.style?.getPropertyValue?.('--banner-offset') ?? '';
+    const computedVar = inlineVar || typeof getComputedStyle !== 'function'
+      ? ''
+      : getComputedStyle(el).getPropertyValue('--banner-offset');
+    const offset = parseFloat(inlineVar || computedVar) || parseFloat(el.style?.bottom ?? '') || 0;
+    const height = el.offsetHeight || 75;
+    travel = offset + height;
+  }
 
   return {
     duration: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : duration,

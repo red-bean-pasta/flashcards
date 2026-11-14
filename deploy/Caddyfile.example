@@ -20,8 +20,14 @@ https://{$DOMAIN:localhost}:{$PORT:443} {
         # Strip Server header to prevent fingerprinting
         -Server
 
-        # Enforce HTTPS strictly (1 year, subdomains, preload)
+        # Enforce HTTPS strictly once validated in production (roll out max-age progressively: 300 -> 86400 -> 31536000 before preloading)
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Isolate cross-origin window.opener while preserving app-initiated OAuth popups
+        Cross-Origin-Opener-Policy "same-origin-allow-popups"
+
+        # Protect same-origin HTML, scripts, and data responses from cross-origin reads
+        Cross-Origin-Resource-Policy "same-origin"
 
         # Prevent MIME type sniffing
         X-Content-Type-Options "nosniff"
@@ -33,14 +39,16 @@ https://{$DOMAIN:localhost}:{$PORT:443} {
         Referrer-Policy "strict-origin-when-cross-origin"
 
         # Restrict browser feature permissions
-        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), focus-without-user-activation=()"
 
         # Content Security Policy:
         # - Tightened connect-src to origin and Microsoft auth/graph/storage endpoints
         # - style-src unsafe-inline allowed for Svelte dynamic inline style variables
         # - frame-src and form-action for OneDrive picker and OAuth
+        # - Trusted Types enforced via native Element.setHTML() and dompurify fallback
         # - upgrade-insecure-requests forces HTTPS on all requests
-        Content-Security-Policy "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com https://graph.microsoft.com https://login.microsoftonline.com https://my.microsoftpersonalcontent.com https://*.1drv.com https://*.1drv.ms https://*.live.com https://*.storage.live.com; frame-src https://onedrive.live.com https://login.microsoftonline.com https://login.live.com; form-action 'self' https://onedrive.live.com; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests;"
+        # - In production deployments with a collector endpoint, pair with Reporting-Endpoints and report-to csp-endpoint; migrate static inline/third-party script allowlists toward 'strict-dynamic' + nonces/hashes when hosting supports dynamic headers.
+        Content-Security-Policy "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com 'report-sample'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com https://graph.microsoft.com https://login.microsoftonline.com https://my.microsoftpersonalcontent.com https://*.1drv.com https://*.1drv.ms https://*.live.com https://*.storage.live.com; frame-src https://onedrive.live.com https://login.microsoftonline.com https://login.live.com; form-action 'self' https://onedrive.live.com; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types dompurify; upgrade-insecure-requests;"
     }
 
     # Preserve request checks before rewriting, then match the final HTML path.

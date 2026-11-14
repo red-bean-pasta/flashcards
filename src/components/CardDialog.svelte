@@ -3,7 +3,6 @@
   import type { Snippet } from 'svelte';
   import type { Card, DeckState, MutationRequest } from '../lib/types';
   import FilePicker from './FilePicker.svelte';
-  import { sizeActionButton } from '../lib/size-action-button';
   import { resizeTextarea } from '../lib/resize-textarea';
   import { cardPosition } from '../lib/card-mutations';
   import { resolveSource, sourceLabel } from '../lib/source-names';
@@ -84,8 +83,8 @@
     {#if action === 'remove'}
       <div class="remove-confirmation">
         <p id="card-dialog-title">Remove this card from <em>{sourceLabel(targetCard!.source)}</em>?</p>
-        <blockquote><p>This applies to every identical question-and-answer pair in this file.</p></blockquote>
-        <blockquote><p>You can restore it later from <code>removed.md</code>.</p></blockquote>
+        <p>This applies to every identical question-and-answer pair in this file.</p>
+        <p>You can restore it later from <code>removed.md</code>.</p>
       </div>
     {:else}
       {#if action === 'add'}
@@ -93,19 +92,19 @@
         {#if destination.create}<p class="file-hint">Create {destination.source}</p>{/if}
       {/if}
       <label for="card-question">Question</label>
-      <textarea use:resizeTextarea id="card-question" rows="3" bind:value={question} disabled={busy} required></textarea>
+      <textarea use:resizeTextarea id="card-question" name="question" rows="3" bind:value={question} disabled={busy} required></textarea>
       <label for="card-answer">Answer</label>
-      <textarea use:resizeTextarea id="card-answer" rows="8" bind:value={answer} disabled={busy} required></textarea>
+      <textarea use:resizeTextarea id="card-answer" name="answer" rows="8" bind:value={answer} disabled={busy} required></textarea>
     {/if}
     {#if error}<p role="alert" class="save-error">{error}</p>{/if}
     <div class="dialog-actions">
       <button type="button" class="text-action" onclick={close} disabled={busy}>Cancel</button>
-      <button use:sizeActionButton type="submit" class="primary-action" disabled={busy}><span>{busy ? 'Saving…' : action === 'remove' ? 'Remove' : 'Save'}</span></button>
+      <button type="submit" class="primary-action" disabled={busy}><span>{busy ? 'Saving…' : action === 'remove' ? 'Remove' : 'Save'}</span></button>
     </div>
   </form>
 {/snippet}
 
-<svelte:window onpointerdown={outside} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) close(); }} />
+<svelte:window onpointerdown={outside} onkeydown={event => { if (event.isComposing || event.keyCode === 229) return; if (event.key === 'Escape' && !event.defaultPrevented) close(); }} />
 {#if action !== 'remove'}
   <aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="card-dialog-title">
     {@render resizeHandle?.(action === 'add' ? 'Resize add panel' : 'Resize edit panel')}

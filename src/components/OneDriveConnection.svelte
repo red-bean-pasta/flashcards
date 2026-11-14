@@ -10,6 +10,7 @@
   import type { DeckBackend } from '../lib/deck-backend';
   import { clampPanelWidth, panelWidthBounds } from '../lib/panel-width';
   import { connectionRetryDeadline, requiresReconnect } from '../lib/mutation-retry';
+  import { swipeDismiss } from '../lib/swipe-dismiss';
 
   let { onBackend, onActivity, onPickerChange, pickerWidth, onPickerWidth, onPickerResizing, viewportWidth, viewportHeight, canSwitch = true }: {
     onBackend: (backend: DeckBackend, name: string) => void; onActivity: (activity: 'connecting' | 'working' | null) => void; onPickerChange: (open: boolean) => void;
@@ -345,43 +346,50 @@
   .onedrive-status:not(.has-status) { display: none; }
   .onedrive-status.has-status {
     position: absolute; z-index: 3;
-    right: max(30px, env(safe-area-inset-right));
-    bottom: max(65px, env(safe-area-inset-bottom));
-    max-width: calc(100% - 60px);
-    max-height: 40vh; overflow: auto;
-    font-size: .78rem; text-align: right; overflow-wrap: anywhere;
+    inset-inline-end: max(30px, env(safe-area-inset-right));
+    inset-block-end: max(65px, env(safe-area-inset-bottom));
+    max-inline-size: calc(100% - 60px);
+    max-block-size: 40dvh; overflow: auto;
+    overscroll-behavior: contain;
+    font-size: .6825rem; text-align: end; overflow-wrap: anywhere;
   }
   .onedrive-status p { margin: 0; }
   .error-action { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; }
-  @media (max-width: 600px), (orientation: portrait) {
-    .onedrive-status.has-status { left: max(20px, env(safe-area-inset-left)); right: auto; text-align: left; }
+  @container (inline-size < 37.5em) {
+    .onedrive-status.has-status { inset-inline-start: max(20px, env(safe-area-inset-left)); inset-inline-end: auto; text-align: start; }
+  }
+  @media (max-width: 37.5em), (orientation: portrait) {
+    .onedrive-status.has-status { inset-inline-start: max(20px, env(safe-area-inset-left)); inset-inline-end: auto; text-align: start; }
   }
 
-  .picker-pane { position: fixed; z-index: 0; inset: 0 auto 0 0; width: var(--picker-width); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
+  .picker-pane { position: fixed; z-index: 0; inset-block: 0; inset-inline: 0 auto; inline-size: var(--picker-width); display: flex; flex-direction: column; background: var(--dialog-color, #f9f7f0); visibility: visible; transition: visibility 0s; }
   .picker-hidden { visibility: hidden; pointer-events: none; transition: visibility 0s 300ms; }
-  .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .8rem 1rem; }
-  .picker-header-actions { display: flex; gap: 1rem; }
-  .picker-frames { position: relative; flex: 1; min-height: 0; }
-  .picker-pane iframe { position: absolute; inset: 0; border: 0; width: 100%; height: 100%; }
+  .picker-header { display: flex; justify-content: space-between; align-items: center; padding: .7rem .875rem; touch-action: pan-y; }
+  .picker-header-actions { display: flex; gap: .875rem; }
+  .picker-frames { position: relative; flex: 1; min-block-size: 0; }
+  .picker-pane iframe { position: absolute; inset: 0; border: 0; inline-size: 100%; block-size: 100%; }
   .picker-pane iframe.pending { opacity: 0; pointer-events: none; }
-  .picker-resize { position: absolute; z-index: 1; top: 0; right: -6px; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; }
+  .picker-resize { position: absolute; z-index: 1; inset-block: 0; inset-inline-end: -6px; inline-size: 12px; cursor: col-resize; touch-action: none; }
   .picker-resize:focus-visible { outline: 2px solid #9ca98d; outline-offset: -3px; }
   @media (aspect-ratio < 5/6) {
-    .picker-pane { z-index: 10; box-shadow: 2px 0 18px #0003; transform: translateX(0); transition: transform 300ms ease, visibility 0s; }
-    .picker-hidden { transform: translateX(-100%); transition: transform 300ms ease, visibility 0s 300ms; }
+    .picker-pane { z-index: 10; box-shadow: 2px 0 18px #0003; translate: var(--picker-swipe, 0px) 0; transition: translate 300ms ease, visibility 0s; }
+    .picker-pane:global(.picker-swiping) { transition: none; }
+    .picker-hidden { translate: -100% 0; transition: translate 300ms ease, visibility 0s 300ms; }
   }
   @media (prefers-reduced-motion: reduce) { .picker-pane { transition: none; } }
 </style>
 
-<svelte:window onkeydown={event => { if (pickerOpen && event.key === 'Escape') closePicker(); }} />
+<svelte:window onkeydown={event => { if (event.isComposing || event.keyCode === 229) return; if (pickerOpen && event.key === 'Escape') closePicker(); }} />
 {#if pickerMounted}
-  <aside class="picker-pane" class:picker-hidden={!pickerOpen} inert={!pickerOpen} aria-hidden={!pickerOpen} aria-label="Choose a OneDrive folder">
+  <aside class="picker-pane" class:picker-hidden={!pickerOpen}
+    inert={!pickerOpen} aria-hidden={!pickerOpen} aria-label="Choose a OneDrive folder"
+    use:swipeDismiss={{ canSwipe: () => pickerOpen && window.matchMedia('(aspect-ratio < 5/6)').matches, onDismiss: () => closePicker() }}>
     <div class="picker-header"><span>Choose a folder</span><div class="picker-header-actions"><button class="text-action" disabled={busy || pickerStarting} onclick={refreshPicker} aria-label="Refresh folder picker">Refresh</button><button class="text-action" disabled={busy} onclick={() => closePicker()} aria-label="Close folder picker">Close</button></div></div>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: A focusable separator is the accessible window-splitter pattern. -->
     <div class="picker-resize" role="separator" tabindex="0" aria-label="Resize folder picker" aria-orientation="vertical" aria-valuemin={pickerBounds ? Math.round(pickerBounds.min) : 0} aria-valuemax={pickerBounds ? Math.round(pickerBounds.max) : 0} aria-valuenow={Math.round(pickerWidth)} aria-valuetext={`${Math.round(pickerWidth)} pixels`} onpointerdown={startResize} onpointermove={moveResize} onlostpointercapture={() => onPickerResizing(false)} onkeydown={resizeWithKeyboard}></div>
     <div class="picker-frames">
       {#each pickerSlots as slot (slot.id)}
-        <iframe class="picker-frame" bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} title="OneDrive folder picker"></iframe>
+        <iframe class="picker-frame" bind:this={slot.frame} class:pending={slot.id !== activePickerId} inert={slot.id !== activePickerId} aria-hidden={slot.id !== activePickerId} allow="focus-without-user-activation 'none'" title="OneDrive folder picker"></iframe>
       {/each}
     </div>
   </aside>

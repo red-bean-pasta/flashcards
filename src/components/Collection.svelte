@@ -105,6 +105,7 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape' && isOpen) {
       isOpen = false;
     }
@@ -114,26 +115,26 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeyDown} onresize={updateAlignment} />
 
 {#if !disabled}
-  <aside class="collection" aria-label="Collection">
+  <div class="collection">
     <div class="source-select">
-      <label for="source-trigger" bind:this={labelEl}>Practice from</label>
+      <span id="source-label" class="source-select-label" bind:this={labelEl}>Practice from</span>
       <div class="source-choice-anchor">
         <button id="source-trigger" type="button" class="source-choice-button" aria-haspopup="dialog"
-          aria-expanded={isOpen} onclick={toggleOpen}>
+          aria-labelledby="source-label source-trigger" aria-expanded={isOpen} onclick={toggleOpen}>
           <span class="source-choice-label">{source ? sourceLabel(source) : 'All materials'}</span>
           <span class="source-choice-arrow" aria-hidden="true">⌄</span>
         </button>
       </div>
     </div>
     <span class="collection-count">{source ? `${available} / ${total}` : total} cards</span>
-  </aside>
+  </div>
 {/if}
 
 {#if isOpen}
   <div class="material-banner-stack">
     {#each openFolders as folder, depth (depth)}
       <aside class="material-banner" aria-label="Materials in {folder.name}"
-        style="bottom: {getBannerOffset(depth)}px; padding-top: {bannerBottomPadding}px; padding-bottom: {bannerBottomPadding}px; z-index: {40 + depth};"
+        style="--banner-offset: {getBannerOffset(depth)}px; padding-block: {bannerBottomPadding}px; z-index: {40 + depth};"
         use:measureBanner={depth} onpointerdown={e => handleBannerPointerDown(e, depth)}
         transition:bannerSlideTransition|global={{
           duration: 180,

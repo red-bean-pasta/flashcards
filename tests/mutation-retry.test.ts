@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { retryDecision, connectionRetryDeadline, requiresReconnect } from '../src/lib/mutation-retry.ts';
+import { retryDecision, connectionRetryDeadline, requiresReconnect, formatRetryCountdown } from '../src/lib/mutation-retry.ts';
 import { DeckRequestError, RetryableLocalConflict } from '../src/lib/deck-client.ts';
 import { GraphError } from '../src/lib/onedrive/graph.ts';
 import { OneDriveAuthError } from '../src/lib/onedrive/auth.ts';
@@ -75,4 +75,21 @@ test('connection retries distinguish transport failures from invalid responses a
   ]) {
     assert.equal(connectionRetryDeadline(error, now), null);
   }
+});
+
+test('formatRetryCountdown formats balanced multi-minute, sub-minute, and expired countdowns and rejects non-finite inputs', () => {
+  const formatter = new Intl.DurationFormat(undefined, { style: 'short', secondsDisplay: 'always' });
+  const now = 10_000;
+  const expectedMultiMinute = typeof Temporal !== 'undefined'
+    ? formatter.format({ minutes: 1, seconds: 35 })
+    : formatter.format({ seconds: 95 });
+
+  assert.equal(formatRetryCountdown(now + 95_000, now), `Retry after ${expectedMultiMinute}`);
+  assert.equal(formatRetryCountdown(now + 41_200, now), `Retry after ${formatter.format({ seconds: 42 })}`);
+  assert.equal(formatRetryCountdown(now, now), `Retry after ${formatter.format({ seconds: 0 })}`);
+  assert.equal(formatRetryCountdown(now - 5_000, now), `Retry after ${formatter.format({ seconds: 0 })}`);
+
+  assert.throws(() => formatRetryCountdown(Number.NaN, now), /Retry countdown requires finite timestamps/);
+  assert.throws(() => formatRetryCountdown(Number.POSITIVE_INFINITY, now), /Retry countdown requires finite timestamps/);
+  assert.throws(() => formatRetryCountdown(now + 1000, Number.NaN), /Retry countdown requires finite timestamps/);
 });

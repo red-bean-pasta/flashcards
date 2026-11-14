@@ -91,3 +91,21 @@ export function retryDecision(error: unknown, attempts: number, now: number, jit
   const delay = attempts < 3 ? [2000, 4000, 8000][attempts] * (1 + jitter * 0.25) : 120_000;
   return { kind: 'retry', notBefore: Math.max(serviceDeadline, now + delay) };
 }
+
+const countdownFormatter = new Intl.DurationFormat(undefined, { style: 'short', secondsDisplay: 'always' });
+
+/** Formats the remaining retry wait using Temporal duration balancing and Intl.DurationFormat. */
+export function formatRetryCountdown(deadline: number, now: number): string {
+  if (!Number.isFinite(deadline) || !Number.isFinite(now)) {
+    throw new Error('Retry countdown requires finite timestamps.');
+  }
+  const totalSeconds = Math.max(0, Math.ceil((deadline - now) / 1000));
+  if (typeof Temporal !== 'undefined') {
+    const balanced = Temporal.Duration.from({ seconds: totalSeconds }).round({ largestUnit: 'minute' });
+    const units = balanced.minutes > 0
+      ? { minutes: balanced.minutes, seconds: balanced.seconds }
+      : { seconds: balanced.seconds };
+    return `Retry after ${countdownFormatter.format(units)}`;
+  }
+  return `Retry after ${countdownFormatter.format({ seconds: totalSeconds })}`;
+}

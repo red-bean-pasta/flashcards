@@ -299,6 +299,7 @@
   }
 
   function handleKey(event: KeyboardEvent) {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape' && switchOpen) { switchOpen = false; return; }
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -359,7 +360,7 @@
     onkeydown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); resizeAdd(addWidth + (event.key === 'ArrowLeft' ? 1 : -1) * viewportWidth * .02); } }}></div>
 {/snippet}
 
-<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40vh, 50vw)'}>
+<div class="shell" class:has-progress={showProgress} class:picker-open={pickerOpen} class:picker-resizing={pickerResizing || addResizing || viewportResizing} class:card-panel-open={cardPanelOpen} style:--add-panel-width={addWidth + 'px'} style:--picker-width={pickerWidthInitialized ? pickerWidth + 'px' : 'min(40dvh, 50dvw)'}>
   <input type="file" webkitdirectory hidden bind:this={folderInput} onchange={selectReadOnlyFolder} />
   <OneDriveConnection bind:this={oneDrive}
     onBackend={(next, name) => setBackend(next, name, 'onedrive')}

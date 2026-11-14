@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
   import type { HistoryEntry } from '../lib/history';
+  import { formatRetryCountdown } from '../lib/mutation-retry';
   import { panelTransition } from '../lib/panel-transition';
 
   let { history, problem = '', resizeHandle, onClose, onDismiss, onReview, onReconnect }: {
@@ -11,10 +12,6 @@
   } = $props();
   let panel: HTMLElement;
   let now = $state(Date.now());
-  function countdown(deadline: number) {
-    const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
-    return `Retry after ${Math.floor(seconds / 60)} min ${seconds % 60} s`;
-  }
   onMount(() => {
     const previous = document.activeElement;
     const timer = setInterval(() => { now = Date.now(); }, 1000);
@@ -23,7 +20,7 @@
   });
 </script>
 
-<svelte:window onpointerdown={event => { const target = event.target; if (target instanceof Node && !panel.contains(target) && !(target instanceof Element && target.closest('button'))) onClose(); }} onkeydown={event => { if (event.key === 'Escape' && !event.defaultPrevented) onClose(); }} />
+<svelte:window onpointerdown={event => { const target = event.target; if (target instanceof Node && !panel.contains(target) && !(target instanceof Element && target.closest('button'))) onClose(); }} onkeydown={event => { if (event.isComposing || event.keyCode === 229) return; if (event.key === 'Escape' && !event.defaultPrevented) onClose(); }} />
 <aside class="add-panel" transition:panelTransition|global={{ axis: 'X', duration: 300 }} bind:this={panel} aria-labelledby="history-title">
   {@render resizeHandle('Resize history panel')}
   <div class="add-panel-content history-panel">
@@ -35,11 +32,11 @@
         <article class="history-entry">
           <time class="history-timestamp" datetime={entry.timestamp.toISOString()}>{entry.timestamp.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
           <strong>{entry.action[0].toUpperCase() + entry.action.slice(1)}</strong>
-          <details><summary><span class="history-collapsed">{entry.question.replace(/\s+/g, ' ').trim()}</span><pre class="history-expanded"># question
+          <details><summary><span class="history-collapsed">{entry.question.replace(/\s+/g, ' ').trim()}</span></summary><!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions: Keyboard toggling remains on <summary>; pointer clicks also collapse unless selecting text. --><pre class="history-expanded" onclick={event => { if (!window.getSelection()?.toString()) { event.currentTarget.closest('details')!.open = false; } }}># question
 {entry.question}
 
 # answer
-{entry.answer}</pre></summary></details>
+{entry.answer}</pre></details>
           {#if entry.status === 'needs-review'}
             <p class="history-status failed">
               Review Required:{' '}
@@ -57,7 +54,7 @@
             </p>
           {:else}
             <div class="history-status" class:success={entry.status === 'success'} role="status">
-              {#if entry.status === 'waiting'}{entry.error} {countdown(entry.retryAt!)}
+              {#if entry.status === 'waiting'}{entry.error} {formatRetryCountdown(entry.retryAt!, now)}
               {:else if entry.status === 'applying'}Applying…
               {:else if entry.status === 'retrying'}Retrying…
               {:else if entry.status === 'reviewing'}Reviewing…

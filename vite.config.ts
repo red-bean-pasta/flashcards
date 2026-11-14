@@ -28,4 +28,4 @@ function appShell(): Plugin {
   };
 }
 
-export default defineConfig({ plugins: [svelte(), appShell()], server: { port: 3000, strictPort: true } });
+export default defineConfig({ plugins: [svelte(), appShell()], build: { target: 'esnext' }, server: { port: 3000, strictPort: true } });

@@ -1,36 +1,53 @@
 // Keep the native textarea, replacing its corner grip with a full-width bottom edge.
 export function resizeTextarea(node: HTMLTextAreaElement) {
-  const edgeSize = 7;
   let drag: { pointer: number; y: number; height: number } | undefined;
 
-  function atBottom(event: PointerEvent): boolean {
+  function edgeSize(pointerType: string): number {
+    return pointerType === 'mouse' ? 7 : 14;
+  }
+
+  function atBottom(clientY: number, band: number): boolean {
     const bounds = node.getBoundingClientRect();
-    return event.clientY >= bounds.bottom - edgeSize && event.clientY <= bounds.bottom;
+    return clientY >= bounds.bottom - band && clientY <= bounds.bottom;
+  }
+
+  function preventBottomScroll(event: TouchEvent): void {
+    if (node.disabled || event.touches.length !== 1) return;
+    if (atBottom(event.touches[0].clientY, edgeSize('touch'))) {
+      event.preventDefault();
+    }
   }
 
   function beginResize(event: PointerEvent): void {
-    if (node.disabled || event.button !== 0 || event.pointerType !== 'mouse' || !atBottom(event)) return;
+    if (node.disabled || !event.isPrimary) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (!atBottom(event.clientY, edgeSize(event.pointerType))) return;
     event.preventDefault();
     drag = { pointer: event.pointerId, y: event.clientY, height: node.getBoundingClientRect().height };
     node.setPointerCapture(event.pointerId);
   }
 
   function movePointer(event: PointerEvent): void {
-    if (drag) {
-      const minimum = Number.parseFloat(getComputedStyle(node).minHeight);
-      if (!Number.isFinite(minimum)) throw new Error('Resizable textarea requires a numeric CSS min-height.');
-      node.style.height = `${Math.max(minimum, drag.height + event.clientY - drag.y)}px`;
+    if (drag && event.pointerId === drag.pointer) {
+      const minimum = Number.parseFloat(getComputedStyle(node).minBlockSize);
+      if (!Number.isFinite(minimum)) throw new Error('Resizable textarea requires a numeric CSS min-block-size.');
+      node.style.blockSize = `${Math.max(minimum, drag.height + event.clientY - drag.y)}px`;
     }
-    node.style.cursor = !node.disabled && (drag || atBottom(event)) ? 'ns-resize' : 'text';
+    if (event.pointerType === 'mouse') {
+      node.style.cursor = !node.disabled && (drag || atBottom(event.clientY, edgeSize(event.pointerType))) ? 'ns-resize' : 'text';
+    }
   }
 
   function endResize(event: PointerEvent): void {
     if (!drag || event.pointerId !== drag.pointer) return;
     if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
     drag = undefined;
-    node.style.cursor = !node.disabled && atBottom(event) ? 'ns-resize' : 'text';
+    if (event.pointerType === 'mouse') {
+      node.style.cursor = !node.disabled && atBottom(event.clientY, edgeSize(event.pointerType)) ? 'ns-resize' : 'text';
+    }
   }
 
+  node.addEventListener('touchstart', preventBottomScroll, { passive: false });
   node.addEventListener('pointerdown', beginResize);
   node.addEventListener('pointermove', movePointer);
   node.addEventListener('pointerup', endResize);
@@ -38,6 +55,7 @@ export function resizeTextarea(node: HTMLTextAreaElement) {
   node.addEventListener('lostpointercapture', endResize);
   return {
     destroy() {
+      node.removeEventListener('touchstart', preventBottomScroll);
       node.removeEventListener('pointerdown', beginResize);
       node.removeEventListener('pointermove', movePointer);
       node.removeEventListener('pointerup', endResize);
