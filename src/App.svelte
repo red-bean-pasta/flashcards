@@ -4,7 +4,7 @@
   import OneDriveConnection from './components/OneDriveConnection.svelte';
   import { fade } from 'svelte/transition';
   import { pickLocalFolder, createLocalFolderBackend, type AccessibleDirectory } from './lib/local-folder';
-  import { lastProvider, rememberProvider, rememberLocalFolder } from './lib/storage-memory';
+  import { lastProvider, rememberProvider, lastFolderName, rememberFolderName, rememberLocalFolder } from './lib/storage-memory';
   import { inspectSavedFolder } from './lib/local-folder-restore';
   import { createReadOnlyFolderBackend, readOnlyFolderMessage, selectedFolderName } from './lib/local-folder-readonly';
   import { type DeckBackend } from './lib/deck-backend';
@@ -62,8 +62,10 @@
     });
     return [...pending, ...history.filter(entry => !pendingIds.has(entry.id))].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
   });
+  const initialProvider = lastProvider();
+  const initialConnecting = initialProvider === 'onedrive' || new URLSearchParams(window.location.search).has('code') || new URLSearchParams(window.location.search).has('error');
   let loading = $state(true);
-  let storageActivity = $state<'connecting' | 'working' | null>(lastProvider() === 'onedrive' || new URLSearchParams(window.location.search).has('code') || new URLSearchParams(window.location.search).has('error') ? 'connecting' : null);
+  let storageActivity = $state<'connecting' | 'working' | null>(initialConnecting ? 'connecting' : null);
   const storageBusy = $derived(storageActivity !== null);
   const switchingOneDrive = $derived(storageActivity === 'connecting');
   let pickerOpen = $state(false);
@@ -109,8 +111,8 @@
 
   let backend = $state.raw<DeckBackend | undefined>();
   const readOnly = $derived(backend !== undefined && !backend.persistent);
-  let folderName = $state('');
-  let provider = $state<'local' | 'onedrive' | null>(null);
+  let folderName = $state(initialConnecting ? lastFolderName() : '');
+  let provider = $state<'local' | 'onedrive' | null>(initialConnecting ? (initialProvider ?? 'onedrive') : null);
   let choosingStorage = $state(false);
   let switchOpen = $state(false);
   let switchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,6 +159,7 @@
     if (source === 'local') oneDrive.clearActionError();
     restoreAttempt++;
     rememberProvider(source);
+    rememberFolderName(name);
     provider = source;
     choosingStorage = false;
     switchOpen = false;
@@ -280,7 +283,7 @@
     switchOpen = false;
     clearTimeout(switchTimer);
     if (source === 'local') { oneDrive.closePicker(false); void connectLocal(); }
-    else void oneDrive.startConnection();
+    else { if (!backend) provider = 'onedrive'; void oneDrive.startConnection(); }
   }
 
   function scheduleSwitchClose() {
@@ -369,7 +372,7 @@
     onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   <div class="practice-scroll">
     <div class="practice-page">
-      {#if backend}
+      {#if backend || (switchingOneDrive && provider)}
         <aside class="storage-connection" aria-label="Card storage">
           <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
           {#if switchOpen}
@@ -381,7 +384,9 @@
           {:else}
             <div class="storage-actions" transition:fade={{ duration: 150 }}>
               <button class="text-action" disabled={loading || storageBusy || pendingWrites} aria-expanded={switchOpen} onclick={() => { switchOpen = true; if (!pointerInStorage) scheduleSwitchClose(); }}>{provider === 'local' ? 'Local' : 'OneDrive'}</button>
-              <button class="text-action" disabled={loading || storageBusy || pendingWrites} onclick={() => { closeCardPanel(); if (provider === 'local') void connectLocal(); else oneDrive.openPicker(); }}>{folderName}</button>
+              {#if folderName}
+                <button class="text-action" disabled={loading || storageBusy || pendingWrites} onclick={() => { closeCardPanel(); if (provider === 'local') void connectLocal(); else oneDrive.openPicker(); }}>{folderName}</button>
+              {/if}
             </div>
           {/if}
           </div>

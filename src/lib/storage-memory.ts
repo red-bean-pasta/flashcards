@@ -1,4 +1,5 @@
 const providerKey = 'flashcards.storage.provider';
+const folderNameKey = 'flashcards.storage.folderName';
 export type StorageProvider = 'local' | 'onedrive';
 export function lastProvider(): StorageProvider | null {
   const value = localStorage.getItem(providerKey);
@@ -6,6 +7,8 @@ export function lastProvider(): StorageProvider | null {
   throw new Error('Invalid saved storage provider.');
 }
 export function rememberProvider(value: StorageProvider) { localStorage.setItem(providerKey, value); }
+export function lastFolderName(): string { return localStorage.getItem(folderNameKey) ?? ''; }
+export function rememberFolderName(value: string) { localStorage.setItem(folderNameKey, value); }
 
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
