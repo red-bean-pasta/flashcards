@@ -4,10 +4,11 @@
   import type { HistoryEntry } from '../lib/history';
   import { formatRetryCountdown } from '../lib/mutation-retry';
   import { panelTransition } from '../lib/panel-transition';
+  import type { SeenSyncStatus } from '../lib/seen-queue';
 
-  let { history, problem = '', resizeHandle, onClose, onDismiss, onReview, onReconnect }: {
+  let { history, problem = '', seenStatus, resizeHandle, onClose, onDismiss, onReview, onReconnect }: {
     history: HistoryEntry[]; resizeHandle: Snippet<[string]>;
-    problem?: string; onClose: () => void; onDismiss: (id: string) => void; onReview: (id: string) => void;
+    problem?: string; seenStatus?: SeenSyncStatus; onClose: () => void; onDismiss: (id: string) => void; onReview: (id: string) => void;
     onReconnect: () => void;
   } = $props();
   let panel: HTMLElement;
@@ -25,6 +26,13 @@
   {@render resizeHandle('Resize history panel')}
   <div class="add-panel-content history-panel">
     <div class="history-heading"><h2 id="history-title">History</h2><button class="text-action history-close" onclick={onClose}>Close</button></div>
+    {#if seenStatus}
+      <p class="history-seen-status" class:retrying={seenStatus.kind === 'retrying'} role="status">
+        {#if seenStatus.kind === 'idle'}Seen counts up to date.
+        {:else if seenStatus.kind === 'saving'}Saving seen counts…
+        {:else}Couldn't save seen counts. {formatRetryCountdown(seenStatus.retryAt, now)}.{/if}
+      </p>
+    {/if}
     {#if problem}<p class="history-error" role="alert">{problem}</p>{/if}
     {#if history.length === 0}<p>No changes yet.</p>{/if}
     <div class="history-list">

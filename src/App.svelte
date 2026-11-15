@@ -23,7 +23,7 @@
   import { projectRecoveredMutation } from './lib/mutation-projection';
   import { projectPendingMutations } from './lib/pending-projection';
   import { clampPanelWidth, panelWidthBounds } from './lib/panel-width';
-  import { createSeenQueue, incrementDeckSeen } from './lib/seen-queue';
+  import { createSeenQueue, incrementDeckSeen, type SeenSyncStatus } from './lib/seen-queue';
 
   let deck = $state.raw<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
@@ -130,6 +130,7 @@
   let rememberedFolder = $state<AccessibleDirectory>();
   let restoreAttempt = 0;
   let roundSeenIds = new Set<string>();
+  let seenStatus = $state<SeenSyncStatus>({ kind: 'idle' });
   const seenQueue = createSeenQueue({
     isBusy: () => submitting > 0 || activeId !== null || matchedIds.length > 0,
     onFlush: (source, revision) => {
@@ -137,6 +138,7 @@
         deck = { ...deck, revisions: { ...deck.revisions, [source]: revision } };
       }
     },
+    onStatusChange: status => { seenStatus = status; },
   });
   const queue = createMutationQueue({
     onChange: (items, active, activity, matched) => {
@@ -523,7 +525,7 @@
   </div>
 
   {#if dialogAction === 'history'}
-    <HistoryPanel history={historyEntries} problem={queueProblem} {resizeHandle} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
+    <HistoryPanel history={historyEntries} problem={queueProblem} seenStatus={backend?.persistent?.flushSeen ? seenStatus : undefined} {resizeHandle} onClose={() => { if (dialogAction === 'history') closeCardPanel(); }} onReview={id => {
       void queue.reviewAgain(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     }} onDismiss={id => {
       if (pendingItems.some(item => item.id === id)) void queue.discard(id).catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });

@@ -16,9 +16,15 @@ import type { DeckState } from './types.js';
 
 export type SeenStorage = Pick<typeof seenStorage, 'list' | 'put' | 'remove'>;
 
+export type SeenSyncStatus =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'retrying'; retryAt: number };
+
 export interface SeenQueueCallbacks {
   isBusy?: () => boolean;
   onFlush?: (source: string, revision: string | null) => void;
+  onStatusChange?: (status: SeenSyncStatus) => void;
 }
 
 export interface SeenQueueOptions {
@@ -95,6 +101,23 @@ function retargetIncrements(increments: SeenIncrement[], operation: CardOperatio
   return result;
 }
 
+export function deriveSeenSyncStatus(batches: ReadonlyArray<StoredSeenBatch>, currentTime: number): SeenSyncStatus {
+  if (!batches.length) return { kind: 'idle' };
+  let earliestRetry: number | null = null;
+  for (const batch of batches) {
+    if (batch.retryAt === undefined || batch.retryAt <= currentTime) {
+      return { kind: 'saving' };
+    }
+    earliestRetry = earliestRetry === null ? batch.retryAt : Math.min(earliestRetry, batch.retryAt);
+  }
+  return { kind: 'retrying', retryAt: earliestRetry! };
+}
+
+function sameSyncStatus(a: SeenSyncStatus, b: SeenSyncStatus): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind !== 'retrying' || a.retryAt === (b as { kind: 'retrying'; retryAt: number }).retryAt;
+}
+
 export function createSeenQueue(
   callbacks: SeenQueueCallbacks = {},
   storage: SeenStorage = seenStorage,
@@ -108,10 +131,18 @@ export function createSeenQueue(
   let backend: DeckBackend | undefined;
   let closed = false;
   let running = false;
+  let flushing = false;
   let wakeRequested = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let nextRunAt: number | null = null;
   let storageChain = Promise.resolve();
+  let lastStatus: SeenSyncStatus = { kind: 'idle' };
+
+  function emitStatus(next: SeenSyncStatus) {
+    if (closed || sameSyncStatus(lastStatus, next)) return;
+    lastStatus = next;
+    callbacks.onStatusChange?.(next);
+  }
 
   function enqueueStorage<T>(action: () => Promise<T>): Promise<T> {
     const task = storageChain.then(action);
@@ -157,7 +188,7 @@ export function createSeenQueue(
     }
     const current = backend?.persistent;
     if (closed || !current?.flushSeen) return;
-    const totalPending = await enqueueStorage(async () => {
+    const { totalPending, updatedBatches } = await enqueueStorage(async () => {
       const batches = await matchingBatches(current.destination);
       const existing = batches.find(batch => batch.source === source);
       if (existing) {
@@ -181,9 +212,10 @@ export function createSeenQueue(
       for (const batch of updatedBatches) {
         for (const item of batch.increments) sum += item.delta;
       }
-      return sum;
+      return { totalPending: sum, updatedBatches };
     });
     if (closed || backend?.persistent !== current) return;
+    emitStatus(deriveSeenSyncStatus(updatedBatches, now()));
     if (totalPending >= flushThreshold) schedule(0);
     else scheduleAt(now() + flushDelayMs);
   }
@@ -191,7 +223,7 @@ export function createSeenQueue(
   async function retarget(operation: CardOperation): Promise<void> {
     const current = backend?.persistent;
     if (closed || !current || operation.action === 'add' || isUnchangedEdit(operation)) return;
-    await enqueueStorage(async () => {
+    const updatedBatches = await enqueueStorage(async () => {
       const batches = await matchingBatches(current.destination);
       for (const batch of batches) {
         if (batch.source !== operation.source) continue;
@@ -202,7 +234,11 @@ export function createSeenQueue(
           await storage.put({ ...batch, increments });
         }
       }
+      return matchingBatches(current.destination);
     });
+    if (!closed && backend?.persistent === current && !flushing) {
+      emitStatus(deriveSeenSyncStatus(updatedBatches, now()));
+    }
   }
 
   async function applyFlushSuccess(batchId: string, snapshot: ReadonlyArray<SeenIncrement>): Promise<void> {
@@ -246,6 +282,10 @@ export function createSeenQueue(
     if (closed || !executor?.flushSeen) return;
     if (callbacks.isBusy?.()) {
       schedule(1000);
+      const deferred = await enqueueStorage(() => matchingBatches(executor.destination));
+      if (!closed && backend === current) {
+        emitStatus(deriveSeenSyncStatus(deferred, now()));
+      }
       return;
     }
 
@@ -254,28 +294,38 @@ export function createSeenQueue(
 
     const currentTime = now();
     const ready = batches.filter(batch => batch.retryAt === undefined || batch.retryAt <= currentTime);
-    for (const batch of ready) {
-      if (closed || backend !== current || callbacks.isBusy?.()) break;
-      const snapshot = structuredClone(batch.increments);
-      try {
-        const revision = await executor.flushSeen(batch.source, snapshot);
-        await applyFlushSuccess(batch.id, snapshot);
-        if (backend === current) {
-          callbacks.onFlush?.(batch.source, revision);
+    if (ready.length > 0) {
+      flushing = true;
+      emitStatus({ kind: 'saving' });
+    }
+    try {
+      for (const batch of ready) {
+        if (closed || backend !== current || callbacks.isBusy?.()) break;
+        const snapshot = structuredClone(batch.increments);
+        try {
+          const revision = await executor.flushSeen(batch.source, snapshot);
+          await applyFlushSuccess(batch.id, snapshot);
+          if (backend === current) {
+            callbacks.onFlush?.(batch.source, revision);
+          }
+        } catch (error) {
+          // Intentionally silence seen-count flush errors and retry persistently in the
+          // background with capped exponential backoff; seen tracking must never interrupt
+          // practice or surface as a failed card mutation.
+          await applyFlushFailure(batch.id, error);
         }
-      } catch (error) {
-        // Intentionally silence seen-count flush errors and retry persistently in the
-        // background with capped exponential backoff; seen tracking must never interrupt
-        // practice or surface in HistoryPanel.
-        await applyFlushFailure(batch.id, error);
       }
+    } finally {
+      flushing = false;
     }
 
     if (closed || backend !== current) return;
     const remaining = await enqueueStorage(() => matchingBatches(executor.destination));
-    if (closed || backend !== current || !remaining.length) return;
-
+    if (closed || backend !== current) return;
     const checkTime = now();
+    emitStatus(deriveSeenSyncStatus(remaining, checkTime));
+    if (!remaining.length) return;
+
     let earliest: number | null = null;
     for (const batch of remaining) {
       if (batch.retryAt === undefined || batch.retryAt <= checkTime) {
@@ -317,6 +367,8 @@ export function createSeenQueue(
     clearSchedule();
     if (next?.persistent?.flushSeen && !closed) {
       void pump();
+    } else {
+      emitStatus({ kind: 'idle' });
     }
   }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSeenQueue, incrementDeckSeen, seenRetryDeadline, type SeenStorage } from '../src/lib/seen-queue.ts';
+import { createSeenQueue, deriveSeenSyncStatus, incrementDeckSeen, seenRetryDeadline, type SeenStorage, type SeenSyncStatus } from '../src/lib/seen-queue.ts';
 import type { StoredSeenBatch } from '../src/lib/seen-storage.ts';
 import type { DeckBackend } from '../src/lib/deck-backend.ts';
 import type { SeenIncrement } from '../src/lib/onedrive/operations.ts';
@@ -233,4 +233,66 @@ test('incrementDeckSeen updates all matching duplicate pairs in the target file 
   const updated = incrementDeckSeen(deck, 'a.md', { question: 'Q', answer: 'A' });
   assert.deepEqual(updated.cards.map(item => item.seen), [1, 3, 5, 2]);
   assert.equal(deck.cards[0].seen, 0);
+});
+
+test('deriveSeenSyncStatus distinguishes idle, saving, and earliest retrying batch', () => {
+  const destination = { provider: 'onedrive' as const, driveId: 'd', folderId: 'root' };
+  const batch = (id: string, retryAt?: number): StoredSeenBatch => ({
+    id,
+    destination,
+    source: `${id}.md`,
+    increments: [{ question: 'Q', answer: 'A', delta: 1 }],
+    attempts: retryAt === undefined ? 0 : 1,
+    ...(retryAt !== undefined ? { retryAt } : {}),
+  });
+
+  assert.deepEqual(deriveSeenSyncStatus([], 1000), { kind: 'idle' });
+  assert.deepEqual(deriveSeenSyncStatus([batch('a')], 1000), { kind: 'saving' });
+  assert.deepEqual(deriveSeenSyncStatus([batch('a', 5000), batch('b')], 1000), { kind: 'saving' });
+  assert.deepEqual(deriveSeenSyncStatus([batch('a', 1000)], 1000), { kind: 'saving' });
+  assert.deepEqual(deriveSeenSyncStatus([batch('a', 8000), batch('b', 4000)], 1000), { kind: 'retrying', retryAt: 4000 });
+});
+
+test('seenQueue emits saving, retrying, and idle status transitions', async () => {
+  const storage = storageFixture();
+  const statuses: SeenSyncStatus[] = [];
+  let shouldFail = true;
+  let nowMs = 10_000;
+
+  const queue = createSeenQueue(
+    { onStatusChange: status => { statuses.push(status); } },
+    storage,
+    { flushDelayMs: 20, flushThreshold: 2, now: () => nowMs, random: () => 0 },
+  );
+  try {
+    queue.setBackend(makeBackend('drive-a', async () => {
+      if (shouldFail) throw new GraphError('offline', 0, 'networkError');
+      return 'rev-2';
+    }));
+
+    // Debouncing a single increment enters saving immediately, then transitions to retrying on failure.
+    await queue.record('a.md', { question: 'Q1', answer: 'A1' });
+    assert.deepEqual(statuses.at(-1), { kind: 'saving' });
+
+    await until(() => statuses.at(-1)?.kind === 'retrying');
+    const retryStatus = statuses.at(-1);
+    assert.equal(retryStatus?.kind, 'retrying');
+    assert.ok(retryStatus.kind === 'retrying' && retryStatus.retryAt >= nowMs + 2000);
+
+    // Advancing past the retry deadline and succeeding returns to idle.
+    shouldFail = false;
+    nowMs = retryStatus.retryAt;
+    queue.wake();
+    await until(() => statuses.at(-1)?.kind === 'idle' && storage.map.size === 0);
+    assert.deepEqual(statuses.map(s => s.kind), ['saving', 'retrying', 'saving', 'idle']);
+
+    // Disconnecting while a batch is pending resets reported status to idle.
+    shouldFail = true;
+    await queue.record('a.md', { question: 'Q2', answer: 'A2' });
+    assert.deepEqual(statuses.at(-1), { kind: 'saving' });
+    queue.setBackend(undefined);
+    assert.deepEqual(statuses.at(-1), { kind: 'idle' });
+  } finally {
+    queue.close();
+  }
 });
