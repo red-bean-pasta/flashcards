@@ -372,7 +372,7 @@
     onPickerResizing={value => { pickerResizing = value; }} canSwitch={!loading && !pendingWrites} />
   <div class="practice-scroll">
     <div class="practice-page">
-      {#if backend || (switchingOneDrive && provider)}
+      {#if backend}
         <aside class="storage-connection" aria-label="Card storage">
           <div class="storage-stack" role="group" aria-label="Storage selection" bind:this={storageHeader} onpointerenter={() => { pointerInStorage = true; clearTimeout(switchTimer); }} onpointerleave={() => { pointerInStorage = false; scheduleSwitchClose(); }}>
           {#if switchOpen}
@@ -436,26 +436,28 @@
         {/if}
       </main>
 
-      <footer class="practice-footer">
-        <div class="collection-footer">
-          <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
-            rootName={folderName}
-            bind:source={selectedSource} disabled={!backend || loading || storageBusy || blocked} onChange={startRound} />
-          <nav class="card-actions" aria-label="Manage cards">
-            {#if writeNotice}
-              <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
-            {:else}
-              <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
-              <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
-              <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
-              <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !backend || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
-              <button class="text-action" disabled={loading || storageBusy || !backend || pendingWrites} onclick={refresh}>Refresh</button>
-              <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
-              </div>
-            {/if}
-          </nav>
-        </div>
-      </footer>
+      {#if backend}
+        <footer class="practice-footer">
+          <div class="collection-footer">
+            <Collection files={visibleDeck.files} total={visibleDeck.cards.length} available={available.length}
+              rootName={folderName}
+              bind:source={selectedSource} disabled={loading || storageBusy || blocked} onChange={startRound} />
+            <nav class="card-actions" aria-label="Manage cards">
+              {#if writeNotice}
+                <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
+              {:else}
+                <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
+                <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
+                <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
+                <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
+                <button class="text-action" disabled={loading || storageBusy || pendingWrites} onclick={refresh}>Refresh</button>
+                <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
+                </div>
+              {/if}
+            </nav>
+          </div>
+        </footer>
+      {/if}
     </div>
   </div>
 

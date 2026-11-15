@@ -29,6 +29,7 @@
   --source-font-ratio: 90%;        /* Of the Question label, not the question body. */
   --blockquote-font-ratio: 75%;    /* Of its section body: answer or question. */
   --collection-font-size: 0.65625rem; /* Practice from, selection, card count and status. */
+  --banner-padding-block: .875rem; /* Shared vertical edge padding for top storage header and bottom footer. */
   --history-success-color: #a7b29a; /* Matches the progress bar. */
   --history-failure-color: #b29a9a; /* Muted red matching the success color. */
   --history-background-transparency: 40%; /* 0% is opaque; 100% is transparent. */
@@ -72,7 +73,8 @@ a { color: inherit; }
 .practice-scroll, .shell > .remaining-line { position: relative; z-index: 2; }
 .storage-connection {
   position: sticky; z-index: 3; inset-block-start: 0; inset-inline: 0;
-  padding: .875rem 1.3125rem; background: var(--dialog-color); font-size: .6825rem;
+  padding-block: var(--banner-padding-block); padding-inline: 1.3125rem;
+  background: var(--dialog-color); font-size: .6825rem;
   max-block-size: 40dvh; overflow: auto; overscroll-behavior: contain;
 }
 .shell > .remaining-line { z-index: 4; }
@@ -305,7 +307,7 @@ a { color: inherit; }
 .practice-footer {
   flex: 0 0 auto;
   margin-block-start: auto;
-  padding-block: .875rem max(25px, env(safe-area-inset-bottom));
+  padding-block: var(--banner-padding-block) max(var(--banner-padding-block), env(safe-area-inset-bottom));
   padding-inline: max(30px, env(safe-area-inset-left)) max(30px, env(safe-area-inset-right));
 }
 
@@ -494,7 +496,7 @@ a { color: inherit; }
   .shell > .remaining-line { writing-mode: vertical-lr; scale: 1 -1; }
   .practice { padding: 24px; }
   .answer { padding-block-start: 30px; }
-  .practice-footer { padding-block: .875rem max(18px, env(safe-area-inset-bottom)); padding-inline: 20px; }
+  .practice-footer { padding-inline: 20px; }
   .source-choice-label { max-inline-size: 150px; }
 }
 
