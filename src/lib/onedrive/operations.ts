@@ -6,6 +6,7 @@ import { DeckRequestError } from '../deck-client.js';
 import type { Card, DeckState, MutationRequest } from '../types.js';
 
 export type Pair = { question: string; answer: string };
+export type SeenIncrement = Pair & { delta: number };
 export type CardOperation = { source: string; original?: Pair } & (
   | { action: 'add' | 'edit'; replacement: Pair }
   | { action: 'remove' }
@@ -52,18 +53,53 @@ export function planContent(text: string, operation: CardOperation): ContentChan
   };
   if (!operation.original) throw new Error('Edit/remove operations require an original pair.');
   const matches = ranges.filter(range => samePair(range.content, operation.original!));
-  const replacement = operation.action === 'edit' ? formatEntry(operation.replacement.question, operation.replacement.answer, eol) : '';
+  if (operation.action === 'edit') {
+    // Validate replacement upfront even when no current range matches.
+    formatEntry(operation.replacement.question, operation.replacement.answer, eol);
+  }
   const chunks: string[] = [];
   const removed: string[] = [];
   let cursor = 0;
   // Match offsets refer to the original Markdown.
-  for (const { start, end } of matches) {
+  for (const { start, end, content } of matches) {
+    const replacement = operation.action === 'edit'
+      ? formatEntry(operation.replacement.question, operation.replacement.answer, eol, content.seen)
+      : '';
     chunks.push(text.slice(cursor, start), replacement);
     if (operation.action === 'remove') removed.push(text.slice(start, end));
     cursor = end;
   }
   chunks.push(text.slice(cursor));
   return { text: chunks.join(''), removed: removed.join(''), matched: matches.length };
+}
+
+export function planSeenIncrements(text: string, source: string, increments: ReadonlyArray<SeenIncrement>): { text: string; matched: number } {
+  validateSource(source);
+  const totals = new Map<string, number>();
+  for (const item of increments) {
+    if (!Number.isSafeInteger(item.delta) || item.delta <= 0) {
+      throw new Error('Seen increment delta must be a positive safe integer.');
+    }
+    const pair = normalizedPair(item);
+    const key = JSON.stringify([pair.question, pair.answer]);
+    totals.set(key, (totals.get(key) ?? 0) + item.delta);
+  }
+  const ranges = parseCardRanges(text, source);
+  if (!totals.size) return { text, matched: 0 };
+  const eol = text.match(/\r\n|\r|\n/)?.[0] ?? '\n';
+  const chunks: string[] = [];
+  let cursor = 0;
+  let matched = 0;
+  for (const { start, end, content } of ranges) {
+    const delta = totals.get(JSON.stringify([content.question, content.answer]));
+    if (delta === undefined) continue;
+    matched++;
+    chunks.push(text.slice(cursor, start), formatEntry(content.question, content.answer, eol, content.seen + delta));
+    cursor = end;
+  }
+  if (!matched) return { text, matched: 0 };
+  chunks.push(text.slice(cursor));
+  return { text: chunks.join(''), matched };
 }
 
 /** Check the operation contract; matching is determined against the latest file. */
@@ -90,7 +126,7 @@ function projectSourceCards(previous: Card[], operation: CardOperation, parse: t
   if (!previous.some(card => samePair(card, original))) throw new Error('Mutation projection lost the original snapshot pair.');
   if (operation.action === 'remove') return previous.filter(card => !samePair(card, original));
   const replacement = parseReplacement(operation, parse);
-  return previous.map(card => samePair(card, original) ? { ...replacement, id: card.id, line: card.line } : card);
+  return previous.map(card => samePair(card, original) ? { ...replacement, id: card.id, line: card.line, seen: card.seen } : card);
 }
 
 /** Configure rendering once for projections of this store's practice snapshot. */
@@ -109,17 +145,19 @@ export function createOperationProjector(parse: typeof parseBrowserCards = parse
 }
 
 function locateSnapshotCards(cards: Card[], text: string, source: string): Card[] {
-  const positions = new Map<string, number[]>();
+  const positions = new Map<string, Array<{ line: number; seen: number }>>();
   for (const { content } of parseCardRanges(text, source)) {
     const key = JSON.stringify([content.question, content.answer]);
-    const lines = positions.get(key) ?? [];
-    lines.push(content.line);
-    positions.set(key, lines);
+    const occurrences = positions.get(key) ?? [];
+    occurrences.push({ line: content.line, seen: content.seen });
+    positions.set(key, occurrences);
   }
   return cards.map(card => {
-    const line = positions.get(JSON.stringify([card.question, card.answer]))?.shift();
+    const match = positions.get(JSON.stringify([card.question, card.answer]))?.shift();
     // An externally edited/deleted card remains in the deliberate practice
     // snapshot until refresh; its old source annotation remains a snapshot too.
-    return line === undefined || line === card.line ? card : { ...card, line };
+    return match === undefined || (match.line === card.line && match.seen === card.seen)
+      ? card
+      : { ...card, line: match.line, seen: match.seen };
   });
 }

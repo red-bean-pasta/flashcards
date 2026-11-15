@@ -7,7 +7,7 @@ import { DeckRequestError } from '../deck-client.js';
 import type { DeckState, MutationRequest } from '../types.js';
 import { GraphError, type GraphClient, type GraphItem } from './graph.js';
 import { OneDriveAuthError } from './auth.js';
-import { captureOperation, planContent, createOperationProjector, isUnchangedEdit, validateTargets, type CardOperation } from './operations.js';
+import { captureOperation, planContent, planSeenIncrements, createOperationProjector, isUnchangedEdit, validateTargets, type CardOperation, type SeenIncrement } from './operations.js';
 import type { StoredMutation, MutationWritePlan } from '../mutation-storage.js';
 import { validateMutationPlan } from '../mutation-plan.js';
 import { createSnapshotCache, type SnapshotCache, type FileSnapshot } from './snapshot-cache.js';
@@ -124,9 +124,15 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
     } catch (error) { asDeckError(error); }
   }
 
-  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, _recovered = false): Promise<DeckState> {
+  async function withSaveLock<T>(run: () => Promise<T>): Promise<T> {
     if (saving) throw new Error('Concurrent mutation submitted to one browser store.');
     saving = true;
+    try { return await run(); }
+    catch (error) { asDeckError(error); }
+    finally { saving = false; }
+  }
+
+  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, _recovered = false): Promise<DeckState> {
     async function advance(patch: Partial<StoredMutation>) { Object.assign(item, patch); await checkpoint(item); }
 
     async function publishPlannedWrite(plan: MutationWritePlan, target: 'archive' | 'source') {
@@ -228,18 +234,43 @@ export function createOneDriveStore(graph: GraphClient, folder: GraphItem, parse
       return projectOperation(item.snapshot, item.operation, current.revision, current.text, applied);
     }
 
-    try {
+    return withSaveLock(async () => {
       if (isUnchangedEdit(item.operation)) return item.snapshot;
       if (!cacheReady) throw new DeckRequestError('Refresh the OneDrive folder before saving.');
       await preparePlans();
       await recoverAndPublishArchive();
       await recoverAndPublishSource();
       return await finish();
-    } catch (error) { asDeckError(error); }
-    finally { saving = false; }
+    });
   }
 
-  return { load, mutate, execute, dispose: () => cache.clear() };
+  async function flushSeen(source: string, increments: ReadonlyArray<SeenIncrement>): Promise<string | null> {
+    return withSaveLock(async () => {
+      if (!cacheReady) throw new DeckRequestError('Refresh the OneDrive folder before saving.');
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let before = await cache.get(source);
+        if (before === undefined) before = await refreshSnapshot(source);
+        if (!before) return null;
+        const change = planSeenIncrements(before.text, source, increments);
+        if (!change.matched || change.text === before.text) return before.revision;
+        await validateSourcePath(source, before.id);
+        try {
+          const saved = await graph.replaceText(before.id, before.revision, change.text);
+          await cache.put(source, { id: saved.id, text: change.text, revision: saved.eTag! });
+          sources.set(source, { id: saved.id, name: source.split('/').at(-1)!, file: {}, eTag: saved.eTag! });
+          return saved.eTag!;
+        } catch (error) {
+          if (!(error instanceof GraphError) || error.uncertain) throw error;
+          await refreshRejected(source, error);
+          if (![409, 412].includes(error.status)) throw error;
+          if (attempt === 2) throw retryableConflict(error);
+        }
+      }
+      return null;
+    });
+  }
+
+  return { load, mutate, execute, flushSeen, dispose: () => cache.clear() };
 }
 
 export type OneDriveStore = ReturnType<typeof createOneDriveStore>;

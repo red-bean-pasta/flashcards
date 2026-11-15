@@ -36,10 +36,22 @@ test('entry validation rejects lossy content and retains the parse failure cause
   assert.throws(() => formatEntry('', 'A', '\n'), error =>
     error instanceof CardInputError && error.cause instanceof CardParseError &&
     error.message === 'Card input:1: Question is empty.');
-  for (const question of ['Q\n\n---\n\nRest', 'Q\n\n# answer\nInjected']) {
+  for (const question of ['Q\n\n---\n\nRest', 'Q\n\n# answer\nInjected', 'Q\n\n# seen\n2']) {
     assert.throws(() => formatEntry(question, 'A', '\n'), CardInputError);
   }
+  assert.throws(() => formatEntry('Q', 'A\n\n# seen\n2', '\n'), CardInputError);
+  assert.throws(() => formatEntry('Q', 'A', '\n', -1), /non-negative integer seen count/);
+  assert.throws(() => formatEntry('Q', 'A', '\n', 1.5), /non-negative integer seen count/);
   assert.throws(() => parseBrowserCards('# answer\nA', 'bad.md', value => value), CardParseError);
+});
+
+test('formatEntry omits # seen when zero and serializes # seen when positive', () => {
+  for (const eol of ['\n', '\r\n', '\r']) {
+    assert.equal(formatEntry('Q', 'A', eol, 0), ['# question', 'Q', '', '# answer', 'A', '', ''].join(eol));
+    const withSeen = formatEntry('Q', 'A', eol, 4);
+    assert.equal(withSeen, ['# question', 'Q', '', '# answer', 'A', '', '# seen', '4', '', ''].join(eol));
+    assert.equal(parseCardRanges(withSeen, 'deck.md')[0].content.seen, 4);
+  }
 });
 
 test('renderBrowserMarkdown fails loudly without a browser Document sanitizer environment', () => {

@@ -2,7 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import type { RootContent } from 'mdast';
 
 export type Span = { start: number; end: number };
-export type Marker = Span & { kind: 'question' | 'answer'; line: number };
+export type Marker = Span & { kind: 'question' | 'answer' | 'seen'; line: number };
 export type MarkdownStructure = { markers: Marker[]; ignored: Span[] };
 
 function sourceSpan(node: RootContent): Span {
@@ -16,7 +16,7 @@ function sourceSpan(node: RootContent): Span {
 
 function cardMarker(node: RootContent, raw: string, span: Span): Marker | undefined {
   if (node.type !== 'heading' || node.depth !== 1) return;
-  const match = /^ {0,3}#\s+(question|answer)\s*#*\s*$/i.exec(raw);
+  const match = /^ {0,3}#\s+(question|answer|seen)\s*#*\s*$/i.exec(raw);
   if (!match) return;
   const line = node.position?.start.line;
   if (line === undefined) throw new Error('Markdown parser contract violated: heading has no source line.');

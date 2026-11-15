@@ -46,7 +46,7 @@ function fixture(count = 28) {
       return Response.json(file);
     } finally { counts.active--; }
   });
-  const store = createOneDriveStore(graph, folder, (text, source) => [{ id: source, source, question: text, answer: '', questionHtml: '', answerHtml: '' }], {
+  const store = createOneDriveStore(graph, folder, (text, source) => [{ id: source, line: 1, source, question: text, answer: '', seen: 0, questionHtml: '', answerHtml: '' }], {
     get: async name => snapshots.get(name),
     put: async (name, value) => { snapshots.set(name, value); },
     clear: async () => { snapshots.clear(); },

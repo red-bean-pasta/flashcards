@@ -1,6 +1,7 @@
 import type { CardOperation } from './onedrive/operations.js';
 import type { DeckState, MutationRequest } from './types.js';
 import { DeckRequestError } from './deck-client.js';
+import { openIndexedDb, runIdbRequest, runIdbTransaction, withOpenedIdb } from './idb.js';
 import { validateSource } from './onedrive/operations.js';
 import { archiveFilename } from './card-text.js';
 
@@ -34,6 +35,13 @@ const STORE = 'operations';
 const META = 'metadata';
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+export function isMutationDestination(value: unknown): value is MutationDestination {
+  if (!record(value)) return false;
+  if (value.provider === 'onedrive') {
+    return typeof value.driveId === 'string' && !!value.driveId && typeof value.folderId === 'string' && !!value.folderId;
+  }
+  return value.provider === 'local' && record(value.folder) && value.folder.kind === 'directory' && typeof value.folder.isSameEntry === 'function';
+}
 function pair(value: unknown): boolean { return record(value) && typeof value.question === 'string' && typeof value.answer === 'string'; }
 function plan(value: unknown, name: string): boolean {
   return record(value) && value.name === name && (value.id === null || typeof value.id === 'string' && !!value.id) &&
@@ -48,10 +56,7 @@ function validItem(value: unknown): value is StoredMutation {
       (value.error !== undefined && typeof value.error !== 'string') ||
       (value.review !== undefined && typeof value.review !== 'boolean') || (value.reconnect !== undefined && typeof value.reconnect !== 'boolean') ||
       (value.retryBlocked !== undefined && typeof value.retryBlocked !== 'boolean')) return false;
-  const destination = value.destination;
-  if (!record(destination) || (destination.provider === 'onedrive'
-    ? typeof destination.driveId !== 'string' || !destination.driveId || typeof destination.folderId !== 'string' || !destination.folderId
-    : destination.provider !== 'local' || !record(destination.folder) || destination.folder.kind !== 'directory' || typeof destination.folder.isSameEntry !== 'function')) return false;
+  if (!isMutationDestination(value.destination)) return false;
   const operation = value.operation, request = value.request, snapshot = value.snapshot;
   if (!record(operation) || !record(request) || !record(snapshot) || typeof operation.source !== 'string' || request.source !== operation.source || request.action !== operation.action ||
       !['add', 'edit', 'remove'].includes(operation.action as string) || !Array.isArray(snapshot.cards) || !Array.isArray(snapshot.files) || !Array.isArray(snapshot.errors) || !record(snapshot.revisions)) return false;
@@ -60,6 +65,7 @@ function validItem(value: unknown): value is StoredMutation {
       !Object.values(snapshot.revisions).every(revision => typeof revision === 'string') ||
       !snapshot.cards.every(card => record(card) && typeof card.id === 'string' && !!card.id && typeof card.source === 'string' &&
         Number.isInteger(card.line) && typeof card.question === 'string' && typeof card.answer === 'string' &&
+        Number.isSafeInteger(card.seen) && (card.seen as number) >= 0 &&
         typeof card.questionHtml === 'string' && typeof card.answerHtml === 'string')) return false;
   try { validateSource(operation.source); } catch (error) { if (error instanceof DeckRequestError) return false; throw error; }
   if (operation.action !== 'add' && (!pair(operation.original) || !Number.isInteger(request.index) || (request.index as number) < 0)) return false;
@@ -75,39 +81,23 @@ function validItem(value: unknown): value is StoredMutation {
 }
 
 function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 2);
-    let unsupportedVersion = false;
-    request.onupgradeneeded = event => {
-      const db = request.result;
-      if (event.oldVersion !== 0) {
-        unsupportedVersion = true;
-        request.transaction!.abort();
-        return;
-      }
+  return openIndexedDb({
+    name: DATABASE,
+    version: 2,
+    blockedMessage: 'The pending changes database is blocked by another browser tab.',
+    upgradeErrorMessage: 'The pending changes database uses an unsupported older version.',
+    onUpgrade(db, event) {
+      if (event.oldVersion !== 0) return false;
       db.createObjectStore(STORE, { keyPath: 'id' });
-      const meta = db.createObjectStore(META);
-      meta.put(0, 'lastOrder');
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(unsupportedVersion ? new Error('The pending changes database uses an unsupported older version.') : request.error);
-    request.onblocked = () => reject(new Error('The pending changes database is blocked by another browser tab.'));
+      db.createObjectStore(META).put(0, 'lastOrder');
+    },
   });
 }
 
-async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const db = await openDatabase();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const request = action(tx.objectStore(STORE));
-      let result: T;
-      request.onsuccess = () => { result = request.result; };
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error('The pending changes transaction was aborted.'));
-    });
-  } finally { db.close(); }
+function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  return withOpenedIdb(openDatabase, db =>
+    runIdbRequest(db, STORE, mode, 'The pending changes transaction was aborted.', action),
+  );
 }
 
 export const mutationStorage = {
@@ -119,10 +109,8 @@ export const mutationStorage = {
     return (items as StoredMutation[]).sort((a, b) => a.order! - b.order!);
   },
   async enqueue(item: StoredMutation): Promise<void> {
-    const db = await openDatabase();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction([STORE, META], 'readwrite');
+    await withOpenedIdb(openDatabase, db =>
+      runIdbTransaction(db, [STORE, META], 'readwrite', 'Could not allocate pending change order.', tx => {
         const meta = tx.objectStore(META);
         const request = meta.get('lastOrder');
         request.onsuccess = () => {
@@ -131,11 +119,8 @@ export const mutationStorage = {
           meta.put(item.order, 'lastOrder');
           tx.objectStore(STORE).add(item);
         };
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error ?? new Error('Could not allocate pending change order.'));
-      });
-    } finally { db.close(); }
+      }),
+    );
   },
   async put(item: StoredMutation): Promise<void> { await transaction('readwrite', store => store.put(item)); },
   async remove(id: string): Promise<void> { await transaction('readwrite', store => store.delete(id)); },

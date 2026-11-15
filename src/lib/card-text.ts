@@ -7,13 +7,18 @@ export class CardInputError extends Error {
   }
 }
 
-export function formatEntry(question: string, answer: string, eol: string): string {
+export function formatEntry(question: string, answer: string, eol: string, seen = 0): string {
+  if (!Number.isSafeInteger(seen) || seen < 0) {
+    throw new Error('Entry formatting requires a non-negative integer seen count.');
+  }
   const normalize = (text: string) => text.trim().replace(/\r\n?|\n/g, eol);
-  const text = `# question${eol}${normalize(question)}${eol}${eol}# answer${eol}${normalize(answer)}${eol}${eol}`;
+  const seenBlock = seen > 0 ? `# seen${eol}${seen}${eol}${eol}` : '';
+  const text = `# question${eol}${normalize(question)}${eol}${eol}# answer${eol}${normalize(answer)}${eol}${eol}${seenBlock}`;
   try {
     const entries = parseCardRanges(text, 'Card input');
     if (entries.length !== 1 || entries[0].content.question !== question.trim().replace(/\r\n?/g, '\n') ||
-        entries[0].content.answer !== answer.trim().replace(/\r\n?/g, '\n')) {
+        entries[0].content.answer !== answer.trim().replace(/\r\n?/g, '\n') ||
+        entries[0].content.seen !== seen) {
       throw new CardInputError('Card content cannot contain card markers or standalone --- separators.');
     }
   } catch (error) {

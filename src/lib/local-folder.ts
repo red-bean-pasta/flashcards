@@ -4,7 +4,7 @@ import { CardParseError } from './card-ranges.js';
 import { CardInputError } from './card-text.js';
 import { parseBrowserCards } from './browser-cards.js';
 import { DeckRequestError, RetryableLocalConflict } from './deck-client.js';
-import { captureOperation, createOperationProjector, isUnchangedEdit, planContent, validateTargets } from './onedrive/operations.js';
+import { captureOperation, createOperationProjector, isUnchangedEdit, planContent, planSeenIncrements, validateTargets, type SeenIncrement } from './onedrive/operations.js';
 import type { DeckBackend } from './deck-backend.js';
 import type { DeckState, MutationRequest } from './types.js';
 import type { StoredMutation, MutationWritePlan } from './mutation-storage.js';
@@ -129,11 +129,27 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
     await write(handle, plan.before, plan.after);
   }
 
-  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, _recovered = false): Promise<DeckState> {
-    if (saving) throw new Error('Concurrent local folder save.');
+  async function withSaveLock<T>(concurrentError: () => Error, run: () => Promise<T>): Promise<T> {
+    if (saving) throw concurrentError();
     saving = true;
-    async function advance(patch: Partial<StoredMutation>) { Object.assign(item, patch); await checkpoint(item); }
-    try {
+    try { return await run(); }
+    catch (error) { report(error); }
+    finally { saving = false; }
+  }
+
+  async function retryLocalConflict<T>(run: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return await run(); }
+      catch (error) {
+        if (!(error instanceof RetryableLocalConflict) || attempt === 2) throw error;
+      }
+    }
+    throw new Error('Unreachable local retry state.');
+  }
+
+  async function execute(item: StoredMutation, checkpoint: (item: StoredMutation) => Promise<void>, _recovered = false): Promise<DeckState> {
+    return withSaveLock(() => new Error('Concurrent local folder save.'), async () => {
+      async function advance(patch: Partial<StoredMutation>) { Object.assign(item, patch); await checkpoint(item); }
       if (isUnchangedEdit(item.operation)) return item.snapshot;
       validateMutationPlan(item);
       if (item.sourceWrite && item.stage === 'queued') throw new Error('Unexpected pending local mutation stage.');
@@ -141,26 +157,21 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
         await advance({ stage: 'releasing' });
       }
       if (item.stage !== 'releasing') {
-        for (let attempt = 0; attempt < 3; attempt++) {
+        await retryLocalConflict(async () => {
           await advance({ stage: 'preparing', sourceWrite: undefined, archiveWrite: undefined });
           const plan = await localPlan(item);
           await advance({ sourceWrite: plan.source, archiveWrite: plan.archive, stage: plan.archive ? 'archive-ready' : 'source-ready' });
           validateMutationPlan(item);
-          try {
-            if (plan.source.before !== plan.source.after) {
-              if (plan.archive && (plan.archive.before ?? '') !== plan.archive.after) {
-                await advance({ stage: 'archive-writing' });
-                await localPublish(plan.archive);
-              }
-              await advance({ stage: 'source-writing' });
-              await localPublish(plan.source);
+          if (plan.source.before !== plan.source.after) {
+            if (plan.archive && (plan.archive.before ?? '') !== plan.archive.after) {
+              await advance({ stage: 'archive-writing' });
+              await localPublish(plan.archive);
             }
-            await advance({ stage: 'releasing' });
-            break;
-          } catch (error) {
-            if (!(error instanceof RetryableLocalConflict) || attempt === 2) throw error;
+            await advance({ stage: 'source-writing' });
+            await localPublish(plan.source);
           }
-        }
+          await advance({ stage: 'releasing' });
+        });
       }
       if (item.stage !== 'releasing') throw new Error('Unexpected pending local mutation stage.');
       const source = item.sourceWrite!;
@@ -169,10 +180,26 @@ export function createLocalFolderBackend(root: Directory, parse = parseBrowserCa
       const file = await handle.getFile();
       const applied = item.operation.action === 'add' || planContent(source.before ?? '', item.operation).matched > 0;
       return project(item.snapshot, item.operation, `${file.lastModified}:${file.size}`, await file.text(), applied);
-    } catch (error) { report(error); }
-    finally { saving = false; }
+    });
   }
-  return { load, mutate, persistent: { destination: { provider: 'local' as const, folder: root }, execute } };
+
+  async function flushSeen(source: string, increments: ReadonlyArray<SeenIncrement>): Promise<string | null> {
+    return withSaveLock(() => new RetryableLocalConflict('Concurrent local folder save.'), async () => {
+      const handle = sources.get(source);
+      if (!handle) return null;
+      return retryLocalConflict(async () => {
+        const file = await handle.getFile();
+        const before = await file.text();
+        const change = planSeenIncrements(before, source, increments);
+        if (!change.matched || change.text === before) return `${file.lastModified}:${file.size}`;
+        await write(handle, before, change.text);
+        const updated = await handle.getFile();
+        return `${updated.lastModified}:${updated.size}`;
+      });
+    });
+  }
+
+  return { load, mutate, persistent: { destination: { provider: 'local' as const, folder: root }, execute, flushSeen } };
 }
 
 export async function pickLocalFolder(): Promise<{ backend: DeckBackend; name: string; handle: Directory }> {

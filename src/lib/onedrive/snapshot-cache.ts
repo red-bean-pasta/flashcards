@@ -1,3 +1,5 @@
+import { openIndexedDb, runIdbRequest, runIdbTransaction } from '../idb.js';
+
 /** Temporary per-connection file snapshots. No tokens are stored here. */
 export interface FileSnapshot { id: string; text: string; revision: string }
 export interface SnapshotCache {
@@ -11,25 +13,16 @@ export function createSnapshotCache(): SnapshotCache {
   const prefix = `${scope}:`;
   let db: Promise<IDBDatabase> | undefined;
   function open(): Promise<IDBDatabase> {
-    return db ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('flashcards-onedrive-snapshots', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('snapshots');
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('Snapshot storage is blocked by another tab.'));
+    return db ??= openIndexedDb({
+      name: 'flashcards-onedrive-snapshots',
+      version: 1,
+      blockedMessage: 'Snapshot storage is blocked by another tab.',
+      onUpgrade: database => { database.createObjectStore('snapshots'); },
     });
   }
   async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const database = await open();
-    return new Promise((resolve, reject) => {
-      const tx = database.transaction('snapshots', mode);
-      const request = run(tx.objectStore('snapshots'));
-      let result: T;
-      request.onsuccess = () => { result = request.result; };
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error('Snapshot storage transaction aborted.'));
-    });
+    return runIdbRequest(database, 'snapshots', mode, 'Snapshot storage transaction aborted.', run);
   }
   return {
     get: name => transaction('readonly', store => store.get(prefix + name)),
@@ -37,13 +30,9 @@ export function createSnapshotCache(): SnapshotCache {
     async clear() {
       if (!db) return;
       const database = await db;
-      await new Promise<void>((resolve, reject) => {
-        const tx = database.transaction('snapshots', 'readwrite');
+      await runIdbTransaction(database, 'snapshots', 'readwrite', 'Snapshot cleanup aborted.', tx => {
         const cursor = tx.objectStore('snapshots').openCursor(IDBKeyRange.bound(prefix, prefix + '\uffff'));
         cursor.onsuccess = () => { const item = cursor.result; if (item) { item.delete(); item.continue(); } };
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error ?? new Error('Snapshot cleanup aborted.'));
       });
       database.close();
     },

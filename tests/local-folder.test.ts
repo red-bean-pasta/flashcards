@@ -300,3 +300,49 @@ test('read-only folder counts non-Markdown entries without collecting the select
   await assert.rejects(createReadOnlyFolderBackend(files).load(), /more than 2000 entries/);
   assert.equal(seen, 2001);
 });
+
+test('local flushSeen increments # seen on disk and replans on concurrent write conflict', async () => {
+  const root = directory('root');
+  let version = 1;
+  let text = entry;
+  const note = {
+    kind: 'file',
+    name: 'notes.md',
+    async getFile() {
+      return { text: async () => text, lastModified: version, size: text.length };
+    },
+    async createWritable(options?: { mode?: string }) {
+      let next = '';
+      return {
+        async write(value: string) { next = value; },
+        async close() {
+          version++;
+          text = next;
+        },
+        async abort() {},
+      };
+    },
+  };
+  root.entries.set('notes.md', note);
+  const backend = createLocalFolderBackend(root as any, (value, source) => parseBrowserCards(value, source, x => x));
+  await backend.load();
+
+  const rev1 = await backend.persistent!.flushSeen!('notes.md', [{ question: 'One', answer: 'Answer', delta: 2 }]);
+  assert.match(text, /# seen\n2\n\n$/);
+  assert.equal(rev1, `${version}:${text.length}`);
+
+  const originalWritable = note.createWritable;
+  let raced = false;
+  note.createWritable = async options => {
+    if (!raced) {
+      raced = true;
+      text += '# question\nExternal\n\n# answer\nAnswer\n\n';
+      version++;
+    }
+    return originalWritable(options);
+  };
+
+  const rev2 = await backend.persistent!.flushSeen!('notes.md', [{ question: 'One', answer: 'Answer', delta: 1 }]);
+  assert.match(text, /# question\nOne\n\n# answer\nAnswer\n\n# seen\n3\n\n# question\nExternal/);
+  assert.equal(rev2, `${version}:${text.length}`);
+});

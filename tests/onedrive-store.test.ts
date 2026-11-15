@@ -525,3 +525,32 @@ test('parallel external failures are presentable without concealing mixed intern
   const mixed = new AggregateError([external, new TypeError('Internal defect')], 'Workers failed');
   assert.throws(() => asDeckError(mixed), error => error === mixed);
 });
+
+test('onedrive flushSeen updates cache and merges additively on remote 412 conflict', async () => {
+  const f = fixture();
+  const source = f.put('root', 'deck.md', entry('One'));
+  const store = f.store();
+  const deck = await store.load();
+  f.reads.length = 0;
+
+  // First flush uses initialized snapshot without re-downloading.
+  const rev1 = await store.flushSeen('deck.md', [{ question: 'One', answer: 'Answer', delta: 2 }]);
+  assert.equal(f.reads.includes(source.id), false);
+  assert.equal(f.text('root', 'deck.md'), '# question\nOne\n\n# answer\nAnswer\n\n# seen\n2\n\n');
+  assert.ok(rev1);
+
+  // Subsequent edit uses the cache revision updated by flushSeen without a 412 conflict.
+  await store.mutate({ action: 'edit', source: 'deck.md', revision: rev1, index: 0, question: 'One edited', answer: 'Answer' }, {
+    ...deck,
+    cards: [{ ...deck.cards[0], seen: 2 }],
+    revisions: { 'deck.md': rev1! },
+  });
+  assert.equal(f.text('root', 'deck.md'), '# question\nOne edited\n\n# answer\nAnswer\n\n# seen\n2\n\n');
+
+  // Another device increments One edited remotely after our load; flushSeen hits 412, re-reads, and adds +delta.
+  f.put('root', 'deck.md', '# question\nOne edited\n\n# answer\nAnswer\n\n# seen\n5\n\n');
+  const rev2 = await store.flushSeen('deck.md', [{ question: 'One edited', answer: 'Answer', delta: 3 }]);
+  assert.equal(f.reads.includes(source.id), true);
+  assert.equal(f.text('root', 'deck.md'), '# question\nOne edited\n\n# answer\nAnswer\n\n# seen\n8\n\n');
+  assert.ok(rev2);
+});

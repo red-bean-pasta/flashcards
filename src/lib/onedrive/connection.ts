@@ -24,6 +24,7 @@ export function createFolderConnection(graph: GraphClient, memory: FolderMemory,
       persistent: {
         destination: { provider: 'onedrive', driveId, folderId: folder.id },
         execute: store.execute,
+        flushSeen: store.flushSeen,
       },
     } });
     if (previous) await previous.dispose();

@@ -4,6 +4,7 @@ export interface Card {
   line: number;
   question: string;
   answer: string;
+  seen: number;
   questionHtml: string;
   answerHtml: string;
 }

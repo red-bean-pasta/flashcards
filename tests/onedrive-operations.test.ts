@@ -4,7 +4,7 @@ import { parseBrowserCards } from '../src/lib/browser-cards.ts';
 import { CardParseError, parseCardRanges } from '../src/lib/card-ranges.ts';
 import { appendArchivedEntries, CardInputError } from '../src/lib/card-text.ts';
 import { DeckRequestError } from '../src/lib/deck-client.ts';
-import { captureOperation, planContent, createOperationProjector } from '../src/lib/onedrive/operations.ts';
+import { captureOperation, planContent, planSeenIncrements, createOperationProjector } from '../src/lib/onedrive/operations.ts';
 import type { CardOperation } from '../src/lib/onedrive/operations.ts';
 import type { DeckState } from '../src/lib/types.ts';
 
@@ -187,4 +187,51 @@ test('saved positions retain unmatched snapshot cards and assign duplicate occur
   assert.deepEqual(source.map(card => card.line), [positions[0], deck.cards[1].line, positions[1], positions[2]]);
   assert.deepEqual(source.slice(0, 3).map(card => card.id), deck.cards.slice(0, 3).map(card => card.id));
   assert.equal(source[1], deck.cards[1]);
+});
+
+test('edit preserves per-occurrence # seen counts and remove deduplicates ignoring # seen', () => {
+  const seenEntry = (question: string, answer: string, seen: number) =>
+    seen > 0 ? `# question\n${question}\n\n# answer\n${answer}\n\n# seen\n${seen}\n\n` : entry(question, answer);
+  const text = seenEntry('Same', 'Answer', 2) + seenEntry('Other', 'Answer', 4) + seenEntry('Same', 'Answer', 5);
+  const cards = parse(text, 'deck.md');
+  const deck: DeckState = { cards, files: ['deck.md'], errors: [], revisions: { 'deck.md': 'v1' } };
+
+  const editOp: CardOperation = { action: 'edit', source: 'deck.md', original: pair, replacement: { question: 'Edited', answer: 'Updated' } };
+  const edited = planContent(text, editOp);
+  assert.equal(edited.matched, 2);
+  assert.equal(
+    edited.text,
+    seenEntry('Edited', 'Updated', 2) + seenEntry('Other', 'Answer', 4) + seenEntry('Edited', 'Updated', 5),
+  );
+
+  const projected = projectOperation(deck, editOp, 'v2', edited.text);
+  assert.deepEqual(projected.cards.map(card => card.seen), [2, 4, 5]);
+
+  const removed = planContent(text, { action: 'remove', source: 'deck.md', original: pair });
+  assert.equal(removed.removed, seenEntry('Same', 'Answer', 2) + seenEntry('Same', 'Answer', 5));
+  assert.equal(appendArchivedEntries(seenEntry('Same', 'Answer', 1), removed.removed), seenEntry('Same', 'Answer', 1));
+  assert.equal(appendArchivedEntries('', removed.removed), seenEntry('Same', 'Answer', 2));
+});
+
+test('planSeenIncrements adds delta to all matching duplicates regardless of differing seen counts', () => {
+  const first = entry('Same', 'Answer').replaceAll('\n', '\r\n');
+  const middle = '# question\r\nOther\r\n\r\n# answer\r\nAnswer\r\n\r\n# seen\r\n9\r\n\r\n';
+  const third = '# question\r\nSame\r\n\r\n# answer\r\nAnswer\r\n\r\n# seen\r\n3\r\n\r\n';
+  const text = first + middle + third;
+
+  const updated = planSeenIncrements(text, 'deck.md', [
+    { question: 'Same', answer: 'Answer', delta: 1 },
+    { question: '  Same  ', answer: '\nAnswer\n', delta: 2 },
+  ]);
+  assert.equal(updated.matched, 2);
+  assert.equal(
+    updated.text,
+    '# question\r\nSame\r\n\r\n# answer\r\nAnswer\r\n\r\n# seen\r\n3\r\n\r\n' +
+    middle +
+    '# question\r\nSame\r\n\r\n# answer\r\nAnswer\r\n\r\n# seen\r\n6\r\n\r\n',
+  );
+
+  const missing = planSeenIncrements(text, 'deck.md', [{ question: 'Missing', answer: 'Answer', delta: 1 }]);
+  assert.deepEqual(missing, { text, matched: 0 });
+  assert.throws(() => planSeenIncrements(text, 'deck.md', [{ question: 'Same', answer: 'Answer', delta: 0 }]), /positive safe integer/);
 });

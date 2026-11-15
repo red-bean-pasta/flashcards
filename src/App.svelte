@@ -6,7 +6,7 @@
   import { pickLocalFolder, createLocalFolderBackend, type AccessibleDirectory } from './lib/local-folder';
   import { lastProvider, rememberProvider, lastFolderName, rememberFolderName, rememberLocalFolder } from './lib/storage-memory';
   import { inspectSavedFolder } from './lib/local-folder-restore';
-  import { createReadOnlyFolderBackend, readOnlyFolderMessage, selectedFolderName } from './lib/local-folder-readonly';
+  import { createReadOnlyFolderBackend, readOnlyFolderMessage, readOnlySeenMessage, selectedFolderName } from './lib/local-folder-readonly';
   import { type DeckBackend } from './lib/deck-backend';
   import Collection from './components/Collection.svelte';
   import Flashcard from './components/Flashcard.svelte';
@@ -23,6 +23,7 @@
   import { projectRecoveredMutation } from './lib/mutation-projection';
   import { projectPendingMutations } from './lib/pending-projection';
   import { clampPanelWidth, panelWidthBounds } from './lib/panel-width';
+  import { createSeenQueue, incrementDeckSeen } from './lib/seen-queue';
 
   let deck = $state.raw<DeckState>({ cards: [], files: [], errors: [], revisions: {} });
   let session = $state(startSession([]));
@@ -121,9 +122,22 @@
   let oneDrive: OneDriveConnection;
   let writeNotice = $state(false);
   let writeNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+  const footerNotices = $derived([
+    ...(readOnly ? [{ id: 'readonly-seen', text: readOnlySeenMessage }] : []),
+    ...(writeNotice ? [{ id: 'readonly-write', text: readOnlyFolderMessage }] : []),
+  ]);
   let folderInput: HTMLInputElement;
   let rememberedFolder = $state<AccessibleDirectory>();
   let restoreAttempt = 0;
+  let roundSeenIds = new Set<string>();
+  const seenQueue = createSeenQueue({
+    isBusy: () => submitting > 0 || activeId !== null || matchedIds.length > 0,
+    onFlush: (source, revision) => {
+      if (revision !== null && deck.revisions[source] !== undefined) {
+        deck = { ...deck, revisions: { ...deck.revisions, [source]: revision } };
+      }
+    },
+  });
   const queue = createMutationQueue({
     onChange: (items, active, activity, matched) => {
       if (!blink && items.some(item => item.review && !pendingItems.some(previous => previous.id === item.id && previous.review))) {
@@ -132,6 +146,7 @@
       }
       pendingItems = items; activeId = active; queueActivity = activity; matchedIds = matched;
       session = updateSession(session, available);
+      if (!active && matched.length === 0) seenQueue.wake();
     },
     onError: error => { console.error(error); queueProblem = error instanceof Error ? error.message : String(error); },
     deck: () => deck,
@@ -155,6 +170,8 @@
 
   function setBackend(next: DeckBackend, name: string, source: 'local' | 'onedrive') {
     queue.setBackend(undefined);
+    seenQueue.setBackend(undefined);
+    roundSeenIds.clear();
     addDraft = undefined; editDrafts = {};
     if (source === 'local') oneDrive.clearActionError();
     restoreAttempt++;
@@ -188,14 +205,39 @@
   const remaining = $derived(order.length - index - (revealed ? 1 : 0));
   const showProgress = $derived(order.length > 0 && !blocked && !switchingOneDrive);
 
-  function startRound() { session = startSession(available); }
-  function performAction() { if (!blocked) session = advancePractice(session); }
+  function startRound() {
+    roundSeenIds.clear();
+    session = startSession(available);
+  }
+
+  function performAction() {
+    if (blocked) return;
+    const wasRevealed = session.revealed;
+    const previousIndex = session.index;
+    const previousLength = session.order.length;
+    const card = session.order[previousIndex];
+    session = advancePractice(session);
+    if (!wasRevealed && session.revealed && card) {
+      if (!roundSeenIds.has(card.id)) {
+        roundSeenIds.add(card.id);
+        if (!readOnly && backend?.persistent?.flushSeen) {
+          deck = incrementDeckSeen(deck, card.source, card);
+          session = updateSession(session, available);
+          void seenQueue.record(card.source, card);
+        }
+      }
+    } else if (wasRevealed && previousIndex === previousLength - 1) {
+      roundSeenIds.clear();
+    }
+  }
   function hideCurrentAnswer() { if (!blocked) session = hideAnswer(session); }
   function showPrevious() { if (!blocked) session = previousQuestion(session); }
   function move(delta: -1 | 1) { if (!blocked) session = moveSession(session, delta); }
 
   function applyDeck(next: DeckState) {
     if (selectedSource && !next.files.includes(selectedSource)) selectedSource = '';
+    const nextIds = new Set(next.cards.map(card => card.id));
+    roundSeenIds = new Set([...roundSeenIds].filter(id => nextIds.has(id)));
     session = reconcileSession(session, filterCards(next.cards, selectedSource));
     deck = next;
   }
@@ -208,8 +250,13 @@
     const item: StoredMutation = { id: crypto.randomUUID(), createdAt: Date.now(), destination: backend.persistent.destination,
       request: { ...request }, operation, snapshot, stage: 'queued', attempts: 0 };
     submitting++;
-    try { await queue.enqueue(item); }
-    finally { submitting--; }
+    try {
+      await queue.enqueue(item);
+      await seenQueue.retarget(operation);
+    } finally {
+      submitting--;
+      if (!submitting && !activeId && !matchedIds.length) seenQueue.wake();
+    }
   }
 
   function mountLoader(request?: (signal: AbortSignal) => Promise<DeckState>) {
@@ -218,9 +265,21 @@
     const load = request ?? (currentBackend ? (signal: AbortSignal) => currentBackend.load(signal) : undefined);
     if (!load) { loading = false; loader = undefined; return; }
     loader = createDeckLoader({
-      onDeck: next => { applyDeck(next); if (currentBackend === backend && !next.errors.length) queue.setBackend(currentBackend); },
+      onDeck: next => {
+        applyDeck(next);
+        if (currentBackend === backend && !next.errors.length) {
+          queue.setBackend(currentBackend);
+          seenQueue.setBackend(currentBackend);
+        }
+      },
       onError: message => { if (message) failure = { message, source: 'deck' }; else if (failure?.source === 'deck') failure = null; },
-      onLoading: value => { loading = value; if (value) queue.setBackend(undefined); },
+      onLoading: value => {
+        loading = value;
+        if (value) {
+          queue.setBackend(undefined);
+          seenQueue.setBackend(undefined);
+        }
+      },
     }, load);
     void loader.refresh();
   }
@@ -339,6 +398,7 @@
   onMount(() => {
     void queue.refresh().catch(error => { queueProblem = error instanceof Error ? error.message : String(error); });
     window.addEventListener('online', queue.wake);
+    window.addEventListener('online', seenQueue.wake);
     if (lastProvider() === 'local') { choosingStorage = true; if ('showDirectoryPicker' in window) void restoreLocal(); }
     updateViewport();
     if (preview === 'connection-error') {
@@ -348,7 +408,7 @@
     } else {
       mountLoader();
     }
-    return () => { queue.close(); window.removeEventListener('online', queue.wake); loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); clearTimeout(blinkTimer); cancelAnimationFrame(viewportResizeFrame); };
+    return () => { queue.close(); seenQueue.close(); window.removeEventListener('online', queue.wake); window.removeEventListener('online', seenQueue.wake); loader?.close(); clearTimeout(writeNoticeTimer); clearTimeout(switchTimer); clearTimeout(blinkTimer); cancelAnimationFrame(viewportResizeFrame); };
   });
 </script>
 
@@ -443,17 +503,18 @@
               rootName={folderName}
               bind:source={selectedSource} disabled={loading || storageBusy || blocked} onChange={startRound} />
             <nav class="card-actions" aria-label="Manage cards">
-              {#if writeNotice}
-                <span class="text-action write-notice" role="status" transition:fade={{ duration: 150 }}>{readOnlyFolderMessage}</span>
-              {:else}
-                <div class="card-action-buttons" transition:fade={{ duration: 150 }}>
+              <div class="card-action-notices" role="status" aria-live="polite">
+                {#each footerNotices as notice (notice.id)}
+                  <p class="write-notice" transition:fade={{ duration: 150 }}>{notice.text}</p>
+                {/each}
+              </div>
+              <div class="card-action-buttons">
                 <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('add')}>Add</button>
                 <button data-remove-toggle class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !!submitting} onclick={() => { if (readOnly) showWriteNotice(); else removeOpen = !removeOpen; }}>Remove</button>
                 <button class="text-action" aria-disabled={readOnly} disabled={loading || storageBusy || blocked || (!current && !readOnly) || !!submitting} onclick={() => readOnly ? showWriteNotice() : openCardPanel('edit')}>Edit</button>
                 <button class="text-action" disabled={loading || storageBusy || pendingWrites} onclick={refresh}>Refresh</button>
                 <button class="text-action history-button" class:has-failures={hasFailures} class:blink-success={blink === 'success'} class:blink-failed={blink === 'failed'} disabled={!!submitting} onclick={() => { oneDrive.closePicker(false); initializeCardWidth(); dialogAction = dialogAction === 'history' ? null : 'history'; }}>History</button>
-                </div>
-              {/if}
+              </div>
             </nav>
           </div>
         </footer>

@@ -7,6 +7,7 @@ import type { DeckBackend } from './deck-backend.js';
 import type { DeckState } from './types.js';
 
 export const readOnlyFolderMessage = 'This folder is read-only in your browser. To edit local files, use Chrome or Edge.';
+export const readOnlySeenMessage = 'Count incrementing is not supported on your browser.';
 
 /** File inputs provide a snapshot, so a new selection is needed to refresh. */
 export function createReadOnlyFolderBackend(files: Iterable<File>, parse = parseBrowserCards): DeckBackend {

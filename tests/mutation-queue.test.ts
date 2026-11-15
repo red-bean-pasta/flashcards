@@ -109,7 +109,7 @@ test('submission ordering does not depend on the clock or queue instance', async
 });
 
 test('persisted snapshots contain only the affected source', () => {
-  const card = (source: string) => ({ id: source, source, line: 1, question: 'Q', answer: 'A', questionHtml: 'Q', answerHtml: 'A' });
+  const card = (source: string) => ({ id: source, source, line: 1, question: 'Q', answer: 'A', seen: 0, questionHtml: 'Q', answerHtml: 'A' });
   const full = { cards: [card('a.md'), card('b.md')], files: ['a.md', 'b.md'], revisions: { 'a.md': '1', 'b.md': '2' }, errors: [] };
   assert.deepEqual(sourceSnapshot(full, 'a.md'), { cards: [card('a.md')], files: ['a.md'], revisions: { 'a.md': '1' }, errors: [] });
 });
